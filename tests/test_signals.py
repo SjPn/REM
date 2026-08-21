@@ -54,6 +54,10 @@ def test_count_active_inventory_shape():
         db.close()
 
 
+def test_portal_blocked_error():
+    err = PortalBlockedError(429, "https://example.com")
+    assert err.status_code == 429
+
 
 def test_sleep_crawl_delay_runs(monkeypatch):
     called = {}
