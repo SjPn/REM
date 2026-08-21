@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import random
+import time
 
 from sqlalchemy.orm import Session
 
@@ -21,10 +22,18 @@ def run_crawl(
     apply_vanish: bool = True,
 ) -> dict:
     settings = get_settings()
-    selected = sources or list(SCRAPERS.keys())
+    selected = list(sources or SCRAPERS.keys())
+    if settings.crawl_human_mode and len(selected) > 1:
+        random.shuffle(selected)
+        logger.info("crawl source order: %s", ", ".join(selected))
     summary: dict = {"sources": {}, "started_at": utcnow().isoformat()}
 
-    for source in selected:
+    for idx, source in enumerate(selected):
+        if idx > 0 and settings.crawl_human_mode:
+            pause = random.uniform(12.0, 35.0)
+            logger.info("pause %.0fs before next source (%s)", pause, source)
+            time.sleep(pause)
+
         run = CrawlRun(source=source, started_at=utcnow(), status="running")
         db.add(run)
         db.commit()

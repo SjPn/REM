@@ -15,19 +15,24 @@ class Settings(BaseSettings):
     )
 
     database_url: str = f"sqlite:///{DATA_DIR / 'estatemonitor.db'}"
-    crawl_delay_sec: float = 1.8
-    crawl_delay_jitter_sec: float = 0.7
-    crawl_block_backoff_sec: float = 12.0
+    # Human-like crawl pacing (seconds). Defaults are conservative to reduce bans.
+    crawl_delay_sec: float = 3.2
+    crawl_delay_jitter_sec: float = 1.8
+    crawl_block_backoff_sec: float = 45.0
+    crawl_human_mode: bool = True
+    # Every N requests take a longer "coffee" break (min/max inclusive range).
+    crawl_break_every_min: int = 10
+    crawl_break_every_max: int = 18
+    crawl_break_sec_min: float = 25.0
+    crawl_break_sec_max: float = 70.0
     crawl_max_pages: int = 5
     http_timeout_sec: float = 30.0
     http_verify_ssl: bool = False
     # Residential / datacenter proxy for crawl (http://user:pass@host:port or socks5://...)
     # Empty = direct connection. Secret — set only in Coolify / local .env, never commit.
     http_proxy: str | None = None
-    user_agent: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
+    # Fixed UA if set; empty = rotate realistic Chrome/Edge/Firefox pool per session.
+    user_agent: str = ""
     log_level: str = "INFO"
     enrich_details: bool = True
     max_detail_pages: int = 40

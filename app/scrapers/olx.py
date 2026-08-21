@@ -23,7 +23,7 @@ from app.scrapers.detail import (
     parse_offer_price,
 )
 from app.scrapers.enrich import enrich_listings
-from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area, parse_price, sleep_crawl_delay
+from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area, parse_price
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,6 @@ class OlxScraper:
                 if not items:
                     break
                 batch.extend(items)
-                sleep_crawl_delay()
             yield from enrich_listings(self, batch)
 
     def fetch_detail(self, listing: RawListing) -> RawListing:

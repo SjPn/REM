@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import logging
 import math
 import random
 import re
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # Sanity bounds for commercial Kyiv listings
 _MAX_PRICE = 500_000_000
@@ -25,16 +29,236 @@ class PortalBlockedError(RuntimeError):
         super().__init__(f"portal blocked {status_code} for {url}")
 
 
-def sleep_crawl_delay(*, blocked: bool = False) -> None:
-    """Polite delay with jitter. Longer pause after 403/429."""
+# Realistic desktop browsers (rotate per crawl session).
+_UA_POOL = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/129.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
+)
+
+# Module-level request counter for rare "coffee breaks" across scrapers in one process.
+_pace_state: dict[str, Any] = {
+    "count": 0,
+    "next_break_at": random.randint(10, 18),
+}
+
+
+def pick_user_agent(fixed: str | None = None) -> str:
+    cleaned = (fixed or "").strip()
+    if cleaned:
+        return cleaned
+    return random.choice(_UA_POOL)
+
+
+def _chrome_client_hints(ua: str) -> dict[str, str]:
+    if "Firefox/" in ua:
+        return {}
+    ver = "131"
+    m = re.search(r"Chrome/(\d+)", ua)
+    if m:
+        ver = m.group(1)
+    brand = '"Not)A;Brand";v="99", "Google Chrome";v="%s", "Chromium";v="%s"' % (ver, ver)
+    if "Edg/" in ua:
+        brand = '"Not)A;Brand";v="99", "Microsoft Edge";v="%s", "Chromium";v="%s"' % (ver, ver)
+    return {
+        "sec-ch-ua": brand,
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"' if "Windows" in ua else '"macOS"',
+    }
+
+
+def browser_headers(ua: str, *, referer: str | None = None, same_site: bool = False) -> dict[str, str]:
+    headers: dict[str, str] = {
+        "User-Agent": ua,
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,image/apng,*/*;q=0.8"
+        ),
+        "Accept-Language": "uk-UA,uk;q=0.9,ru;q=0.8,en-US;q=0.7,en;q=0.6",
+        "Accept-Encoding": "gzip, deflate",
+        "Cache-Control": "max-age=0",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin" if same_site else "none",
+        "Sec-Fetch-User": "?1",
+    }
+    headers.update(_chrome_client_hints(ua))
+    if referer:
+        headers["Referer"] = referer
+        headers["Sec-Fetch-Site"] = "same-origin" if same_site else "cross-site"
+    return headers
+
+
+def human_delay_seconds(*, blocked: bool = False) -> float:
+    """Seconds to wait: lognormal around crawl_delay_sec, longer after blocks."""
     settings = get_settings()
-    base = settings.crawl_delay_sec
-    jitter = settings.crawl_delay_jitter_sec
+    base = float(settings.crawl_delay_sec)
+    jitter = float(settings.crawl_delay_jitter_sec)
     if blocked:
-        base = max(base * 4, settings.crawl_block_backoff_sec)
-        jitter = max(jitter, base * 0.3)
-    delay = max(0.2, base + random.uniform(-jitter, jitter))
-    time.sleep(delay)
+        base = max(base * 5.0, float(settings.crawl_block_backoff_sec))
+        jitter = max(jitter, base * 0.35)
+
+    if settings.crawl_human_mode:
+        # Lognormal: mostly near base, occasional slower "reads".
+        sigma = 0.45 if not blocked else 0.55
+        mu = math.log(max(base, 0.4))
+        delay = random.lognormvariate(mu, sigma)
+        delay = min(delay, base + jitter * 3.5)
+        delay = max(0.6 if not blocked else 8.0, delay)
+    else:
+        delay = max(0.2, base + random.uniform(-jitter, jitter))
+    return delay
+
+
+def sleep_crawl_delay(*, blocked: bool = False) -> None:
+    """Polite delay with human-like jitter. Longer pause after 403/429."""
+    time.sleep(human_delay_seconds(blocked=blocked))
+
+
+def _maybe_session_break() -> None:
+    settings = get_settings()
+    if not settings.crawl_human_mode:
+        return
+    _pace_state["count"] = int(_pace_state["count"]) + 1
+    if int(_pace_state["count"]) < int(_pace_state["next_break_at"]):
+        return
+    lo = float(settings.crawl_break_sec_min)
+    hi = float(settings.crawl_break_sec_max)
+    if hi < lo:
+        lo, hi = hi, lo
+    pause = random.uniform(max(5.0, lo), max(lo, hi))
+    logger.info("crawl coffee break %.0fs after %s requests", pause, _pace_state["count"])
+    time.sleep(pause)
+    every_lo = max(3, int(settings.crawl_break_every_min))
+    every_hi = max(every_lo, int(settings.crawl_break_every_max))
+    _pace_state["next_break_at"] = int(_pace_state["count"]) + random.randint(every_lo, every_hi)
+
+
+def _normalize_proxy(url: str | None) -> str | None:
+    if url is None:
+        return None
+    cleaned = url.strip()
+    return cleaned or None
+
+
+def _origin(url: str) -> str:
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+class HttpClient:
+    """Persistent browser-like session: cookies, Referer, paced GETs."""
+
+    def __init__(self) -> None:
+        settings = get_settings()
+        self.timeout = settings.http_timeout_sec
+        self.verify = settings.http_verify_ssl
+        self.proxy = _normalize_proxy(settings.http_proxy)
+        self.human_mode = bool(settings.crawl_human_mode)
+        self.user_agent = pick_user_agent(settings.user_agent)
+        self._last_url: str | None = None
+        self._client = self._build_client()
+
+    def _build_client(self) -> httpx.Client:
+        kwargs: dict[str, Any] = {
+            "headers": browser_headers(self.user_agent),
+            "timeout": self.timeout,
+            "follow_redirects": True,
+            "verify": self.verify,
+        }
+        if self.proxy:
+            kwargs["proxy"] = self.proxy
+        return httpx.Client(**kwargs)
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> HttpClient:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    def _request_headers(self, url: str) -> dict[str, str]:
+        referer = None
+        same_site = False
+        if self._last_url:
+            last_o = _origin(self._last_url)
+            cur_o = _origin(url)
+            if last_o and cur_o and last_o == cur_o:
+                referer = self._last_url
+                same_site = True
+            elif cur_o:
+                # Jumping into a site: look like came from the portal home.
+                referer = cur_o + "/"
+                same_site = False
+        return browser_headers(self.user_agent, referer=referer, same_site=same_site)
+
+    def _pace(self, url: str) -> None:
+        if not self.human_mode:
+            sleep_crawl_delay()
+            return
+        _maybe_session_break()
+        # Slightly longer when switching host (new "tab").
+        delay = human_delay_seconds()
+        if self._last_url and _origin(self._last_url) != _origin(url):
+            delay *= random.uniform(1.15, 1.55)
+        time.sleep(delay)
+
+    def _raise_for_portal(self, resp: httpx.Response, url: str) -> None:
+        if resp.status_code in (403, 429):
+            # Rotate identity after a block — looks less like a stuck bot.
+            if self.human_mode:
+                self.user_agent = pick_user_agent(None)
+                self._client.headers.update(browser_headers(self.user_agent))
+            sleep_crawl_delay(blocked=True)
+            raise PortalBlockedError(resp.status_code, url)
+        resp.raise_for_status()
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=30),
+        retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
+        reraise=True,
+    )
+    def get_text(self, url: str, params: dict[str, Any] | None = None) -> str:
+        self._pace(url)
+        headers = self._request_headers(url)
+        resp = self._client.get(url, params=params, headers=headers)
+        self._raise_for_portal(resp, url)
+        self._last_url = str(resp.url)
+        return resp.text
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=30),
+        retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
+        reraise=True,
+    )
+    def get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
+        self._pace(url)
+        headers = self._request_headers(url)
+        headers["Accept"] = "application/json, text/plain, */*"
+        headers["Sec-Fetch-Dest"] = "empty"
+        headers["Sec-Fetch-Mode"] = "cors"
+        resp = self._client.get(url, params=params, headers=headers)
+        self._raise_for_portal(resp, url)
+        self._last_url = str(resp.url)
+        return resp.json()
+
+
 
 
 def parse_price(text: str | None) -> tuple[float | None, str | None]:
@@ -206,64 +430,3 @@ def is_kyiv_region_url(url: str) -> bool:
         "petropavlovsk", "vyshenki", "hatne", "glevakha", "kotsyubinsk", "kotsiubyns",
     )
     return any(x in low for x in kyiv_markers)
-
-
-def _normalize_proxy(url: str | None) -> str | None:
-    if url is None:
-        return None
-    cleaned = url.strip()
-    return cleaned or None
-
-
-class HttpClient:
-    def __init__(self) -> None:
-        settings = get_settings()
-        self.timeout = settings.http_timeout_sec
-        self.verify = settings.http_verify_ssl
-        self.proxy = _normalize_proxy(settings.http_proxy)
-        self.headers = {
-            "User-Agent": settings.user_agent,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8,ru;q=0.7",
-        }
-
-    def _client(self, **extra_headers: str) -> httpx.Client:
-        kwargs: dict[str, Any] = {
-            "headers": {**self.headers, **extra_headers},
-            "timeout": self.timeout,
-            "follow_redirects": True,
-            "verify": self.verify,
-        }
-        if self.proxy:
-            kwargs["proxy"] = self.proxy
-        return httpx.Client(**kwargs)
-
-    def _raise_for_portal(self, resp: httpx.Response, url: str) -> None:
-        if resp.status_code in (403, 429):
-            sleep_crawl_delay(blocked=True)
-            raise PortalBlockedError(resp.status_code, url)
-        resp.raise_for_status()
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=2, max=30),
-        retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
-        reraise=True,
-    )
-    def get_text(self, url: str, params: dict[str, Any] | None = None) -> str:
-        with self._client() as client:
-            resp = client.get(url, params=params)
-            self._raise_for_portal(resp, url)
-            return resp.text
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=2, max=30),
-        retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
-        reraise=True,
-    )
-    def get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
-        with self._client(Accept="application/json") as client:
-            resp = client.get(url, params=params)
-            self._raise_for_portal(resp, url)
-            return resp.json()

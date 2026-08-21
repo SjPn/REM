@@ -86,6 +86,7 @@ def test_sleep_crawl_delay_runs(monkeypatch):
                 "crawl_delay_sec": 1.0,
                 "crawl_delay_jitter_sec": 0.0,
                 "crawl_block_backoff_sec": 8.0,
+                "crawl_human_mode": False,
             },
         )(),
     )

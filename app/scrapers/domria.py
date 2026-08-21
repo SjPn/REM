@@ -30,7 +30,6 @@ from app.scrapers.http_utils import (
     is_kyiv_region_url,
     parse_area,
     parse_price,
-    sleep_crawl_delay,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,7 +72,6 @@ class DomriaScraper:
                     if not items:
                         break
                     batch.extend(items)
-                    sleep_crawl_delay()
             yield from enrich_listings(self, batch)
 
     def fetch_detail(self, listing: RawListing) -> RawListing:
