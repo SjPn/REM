@@ -32,23 +32,88 @@ def _count_events(db: Session, event_type: str, since: datetime) -> int:
 
 
 def _price_drop_events(db: Session, since: datetime) -> int:
-    n = 0
+    return len(listing_ids_for_price_drops(db, since=since))
+
+
+def listing_ids_for_vanished(
+    db: Session,
+    *,
+    since: datetime,
+    deal_type: str | None = None,
+) -> list[int]:
+    """Listing ids with a vanished event in the window (newest first)."""
+    rows = db.execute(
+        select(PropertyEvent.listing_id, PropertyEvent.occurred_at)
+        .where(
+            PropertyEvent.event_type == EventType.VANISHED.value,
+            PropertyEvent.occurred_at >= since,
+            PropertyEvent.listing_id.is_not(None),
+        )
+        .order_by(PropertyEvent.occurred_at.desc())
+    ).all()
+    ids: list[int] = []
+    seen: set[int] = set()
+    for lid, _ in rows:
+        if lid is None or int(lid) in seen:
+            continue
+        seen.add(int(lid))
+        ids.append(int(lid))
+    if deal_type and ids:
+        allowed = set(
+            db.scalars(
+                select(Listing.id).where(
+                    Listing.id.in_(ids),
+                    Listing.deal_type == deal_type,
+                )
+            ).all()
+        )
+        ids = [i for i in ids if i in allowed]
+    return ids
+
+
+def listing_ids_for_price_drops(
+    db: Session,
+    *,
+    since: datetime,
+    deal_type: str | None = None,
+) -> list[int]:
+    """Listing ids with a price drop (new < old) in the window."""
     rows = db.scalars(
-        select(PropertyEvent).where(
+        select(PropertyEvent)
+        .where(
             PropertyEvent.event_type == EventType.PRICE_CHANGED.value,
             PropertyEvent.occurred_at >= since,
+            PropertyEvent.listing_id.is_not(None),
         )
+        .order_by(PropertyEvent.occurred_at.desc())
     ).all()
+    ids: list[int] = []
+    seen: set[int] = set()
     for e in rows:
         payload = e.payload or {}
         old_p = payload.get("old_price")
         new_p = payload.get("new_price")
         try:
-            if old_p is not None and new_p is not None and float(new_p) < float(old_p):
-                n += 1
+            if old_p is None or new_p is None or float(new_p) >= float(old_p):
+                continue
         except (TypeError, ValueError):
             continue
-    return n
+        lid = e.listing_id
+        if lid is None or int(lid) in seen:
+            continue
+        seen.add(int(lid))
+        ids.append(int(lid))
+    if deal_type and ids:
+        allowed = set(
+            db.scalars(
+                select(Listing.id).where(
+                    Listing.id.in_(ids),
+                    Listing.deal_type == deal_type,
+                )
+            ).all()
+        )
+        ids = [i for i in ids if i in allowed]
+    return ids
 
 
 def activity_summary(db: Session, *, hours: int = 24) -> dict[str, int]:

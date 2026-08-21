@@ -34,6 +34,8 @@ from app.domain.signals import (
     activity_summary,
     below_market_hint,
     classify_seller,
+    listing_ids_for_price_drops,
+    listing_ids_for_vanished,
     listing_psm_usd,
     recent_events,
     resolve_listing_opex,
@@ -542,6 +544,7 @@ def dashboard(
     q: str | None = None,
     period: str | None = None,
     district: str | None = None,
+    activity: str | None = Query(None, pattern="^(vanished|price_drop)$"),
     opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
     below_market: int = Query(0, ge=0, le=1),
     sort: str = Query("newest"),
@@ -575,11 +578,43 @@ def dashboard(
     watches = db.scalars(select(WatchFilter).order_by(WatchFilter.created_at.desc()).limit(20)).all()
     inventory = count_active_inventory(db)
 
-    filters = [
-        Listing.status.in_(["active", "relisted"]),
-        Listing.price.is_not(None),
-        Listing.deal_type == deal_type,
-    ]
+    activity_since = datetime.now(timezone.utc) - timedelta(hours=24)
+    activity_ids: list[int] | None = None
+    if activity == "vanished":
+        activity_ids = listing_ids_for_vanished(
+            db, since=activity_since, deal_type=deal_type
+        )
+    elif activity == "price_drop":
+        activity_ids = listing_ids_for_price_drops(
+            db, since=activity_since, deal_type=deal_type
+        )
+
+    if activity == "vanished":
+        filters = [
+            Listing.deal_type == deal_type,
+            Listing.status == "vanished",
+        ]
+        if activity_ids is not None:
+            if activity_ids:
+                filters.append(Listing.id.in_(activity_ids))
+            else:
+                filters.append(Listing.id == -1)  # empty result
+    elif activity == "price_drop":
+        filters = [
+            Listing.deal_type == deal_type,
+            Listing.status.in_(["active", "relisted", "vanished"]),
+        ]
+        if activity_ids is not None:
+            if activity_ids:
+                filters.append(Listing.id.in_(activity_ids))
+            else:
+                filters.append(Listing.id == -1)
+    else:
+        filters = [
+            Listing.status.in_(["active", "relisted"]),
+            Listing.price.is_not(None),
+            Listing.deal_type == deal_type,
+        ]
     if source:
         filters.append(Listing.source == source)
     if segment:
@@ -594,7 +629,7 @@ def dashboard(
             )
         )
     since = _period_since(period)
-    if since is not None:
+    if since is not None and activity is None:
         filters.append(Listing.first_seen_at >= since)
     if q:
         like = f"%{q.strip()}%"
@@ -639,6 +674,7 @@ def dashboard(
         or opex_mode
         or price_min is not None
         or price_max is not None
+        or activity_ids is not None
         or sort in ("price_asc", "price_desc", "psm_asc", "psm_desc", "dom_asc", "dom_desc")
     )
     order = _sql_order(sort, period=period)
@@ -665,7 +701,11 @@ def dashboard(
             candidates = [
                 x for x in candidates if signals_tmp.get(x.id, {}).get("below_market")
             ]
-        candidates = _sort_listings_in_memory(candidates, sort)
+        if activity_ids is not None and sort == "newest":
+            rank = {lid: i for i, lid in enumerate(activity_ids)}
+            candidates.sort(key=lambda x: rank.get(x.id, 10**9))
+        else:
+            candidates = _sort_listings_in_memory(candidates, sort)
         total = len(candidates)
         pages = max(1, (total + per_page - 1) // per_page)
         page = min(page, pages)
@@ -715,6 +755,7 @@ def dashboard(
         "segment": segment or None,
         "period": period or None,
         "district": district if district in KYIV_DISTRICTS else None,
+        "activity": activity or None,
         "opex": opex_mode or None,
         "below_market": below_market or None,
         "sort": sort if sort != "newest" else None,
@@ -745,6 +786,7 @@ def dashboard(
             "q": q or "",
             "period": period or "",
             "district": district if district in KYIV_DISTRICTS else "",
+            "activity": activity or "",
             "opex": opex_mode or "",
             "below_market": below_market,
             "sort": sort,

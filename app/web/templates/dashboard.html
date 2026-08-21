@@ -24,14 +24,14 @@
       <div class="ov-n">{{ activity.new_listings }}</div>
       <div class="ov-l">Новые за сутки</div>
     </a>
-    <div class="ov-card">
+    <a class="ov-card is-accent {% if activity == 'vanished' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=vanished">
       <div class="ov-n">{{ activity.vanished }}</div>
       <div class="ov-l">Исчезли</div>
-    </div>
-    <div class="ov-card">
+    </a>
+    <a class="ov-card is-accent {% if activity == 'price_drop' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=price_drop">
       <div class="ov-n">{{ activity.price_drops }}</div>
       <div class="ov-l">Уценили</div>
-    </div>
+    </a>
     <a class="ov-card is-accent" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">
       <div class="ov-n">{{ activity.likely_deals }}</div>
       <div class="ov-l">Похоже на сделку</div>
@@ -70,6 +70,7 @@
     <aside class="filter-side" aria-label="Фильтры">
       <form class="filters filters-side" method="get" action="/">
         <input type="hidden" name="deal_type" value="{{ deal_type }}" />
+        {% if activity %}<input type="hidden" name="activity" value="{{ activity }}" />{% endif %}
         <div class="filter-side-head">
           <h2>Фильтры</h2>
           <a class="link-more" href="/?deal_type={{ deal_type }}">Сбросить</a>
@@ -194,7 +195,11 @@
     <section class="catalog-main">
       <div class="section-head">
         <h2>Список</h2>
-        <span class="muted">{{ total }} · стр. {{ page }}/{{ pages }}</span>
+        <span class="muted">
+          {% if activity == 'vanished' %}исчезли за сутки · {% elif activity == 'price_drop' %}уценили за сутки · {% endif %}
+          {{ total }} · стр. {{ page }}/{{ pages }}
+          {% if activity %}<a class="link-more" href="/?deal_type={{ deal_type }}">сбросить</a>{% endif %}
+        </span>
       </div>
 
       {% if not listings %}

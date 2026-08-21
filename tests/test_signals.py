@@ -69,7 +69,58 @@ def test_portal_blocked_error():
     assert err.status_code == 429
 
 
-def test_sleep_crawl_delay_runs(monkeypatch):
+def test_listing_ids_for_activity(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    db_path = tmp_path / "act.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    from app.config import get_settings
+    from app.db import models as db_models
+    from app.db.models import Listing, PropertyEvent, get_session_factory, init_db
+    from app.domain.signals import listing_ids_for_price_drops, listing_ids_for_vanished
+
+    get_settings.cache_clear()
+    db_models._engine = None
+    db_models._SessionLocal = None
+    init_db()
+    SessionLocal = get_session_factory()
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        lst = Listing(
+            source="t",
+            external_id="1",
+            url="https://e/1",
+            deal_type="sale",
+            status="vanished",
+            first_seen_at=now - timedelta(days=3),
+            last_seen_at=now,
+            vanished_at=now,
+            price=100000,
+            currency="USD",
+        )
+        db.add(lst)
+        db.flush()
+        db.add(
+            PropertyEvent(
+                listing_id=lst.id,
+                event_type="vanished",
+                occurred_at=now,
+                payload={},
+            )
+        )
+        db.add(
+            PropertyEvent(
+                listing_id=lst.id,
+                event_type="price_changed",
+                occurred_at=now,
+                payload={"old_price": 120000, "new_price": 100000},
+            )
+        )
+        db.commit()
+        since = now - timedelta(hours=24)
+        assert listing_ids_for_vanished(db, since=since, deal_type="sale") == [lst.id]
+        assert listing_ids_for_price_drops(db, since=since, deal_type="sale") == [lst.id]
+        assert listing_ids_for_vanished(db, since=since, deal_type="rent") == []
     called = {}
 
     def fake_sleep(sec):
