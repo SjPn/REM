@@ -1,62 +1,55 @@
 {% extends "base.html" %}
 {% set active_nav = "market" %}
-{% block title %}Рынок — {{ 'Продажа' if mode == 'sale' else 'Аренда' }} — REM{% endblock %}
+{% set deal_mode = mode %}
+{% block title %}Рынок · {{ 'продажа' if mode == 'sale' else 'аренда' }} — REM{% endblock %}
 {% block content %}
-  <p class="page-kicker">Рынок · Киев</p>
-  <h1 class="page-title">{{ 'Продажа' if mode == 'sale' else 'Аренда' }} · цены и объём</h1>
-  <p class="page-lead">
-    В базе: <strong>{{ inventory.sale_total }}</strong> на продаже ·
-    <strong>{{ inventory.rent_total }}</strong> в аренде.
-  </p>
-
-  <div class="mode-tabs">
-    <a class="{% if mode == 'sale' %}active{% endif %}" href="/market?mode=sale">Продажа ({{ inventory.sale_total }})</a>
-    <a class="{% if mode == 'rent' %}active{% endif %}" href="/market?mode=rent">Аренда ({{ inventory.rent_total }})</a>
-  </div>
-
-  <div class="market-strip" style="margin-top: 1.1rem;">
-    <div class="market-tile">
-      <div class="l">Средняя цена м² · Киев</div>
-      <div class="n">{{ fmt_psm(market_slice.city_avg_psm, mode) }}</div>
-      <div class="muted">
-        медиана {{ fmt_psm(market_slice.city_median_psm, mode) }} ·
-        посчитано по {{ market_slice.city_count }} объявлениям
-        {% if mode == 'rent' %} · {{ rent_slice_label }}{% endif %}
-      </div>
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Рынок</h1>
+      <p class="page-lead">
+        {% if mode == 'sale' %}
+          <strong>{{ inventory.sale_total }}</strong> на продаже
+        {% else %}
+          <strong>{{ inventory.rent_total }}</strong> в аренде
+          {% if rent_slice_label %} · {{ rent_slice_label }}{% endif %}
+        {% endif %}
+        · средняя {{ fmt_psm(market_slice.city_avg_psm, mode) }}
+      </p>
     </div>
-    <div class="market-tile">
-      <div class="l">{% if mode == 'sale' %}Сейчас на продаже{% else %}Сейчас в аренде{% endif %}</div>
-      <div class="n">
-        {% if mode == 'sale' %}{{ inventory.sale_total }}{% else %}{{ inventory.rent_total }}{% endif %}
-      </div>
-      <div class="muted">
-        без района:
-        {% if mode == 'sale' %}{{ inventory.sale_no_district }}{% else %}{{ inventory.rent_no_district }}{% endif %}
-      </div>
-    </div>
+    {% if mode == 'rent' %}
+    <form class="inline-filter" method="get" action="/market">
+      <input type="hidden" name="mode" value="rent" />
+      <label class="sr-only" for="opex-m">OPEX</label>
+      <select id="opex-m" name="opex" onchange="this.form.submit()" aria-label="Группа OPEX">
+        <option value="" {% if not opex %}selected{% endif %}>OPEX: авто</option>
+        <option value="without" {% if opex == 'without' %}selected{% endif %}>Без OPEX ({{ market.rent_without_opex.city_count }})</option>
+        <option value="with" {% if opex == 'with' %}selected{% endif %}>С OPEX ({{ market.rent_with_opex.city_count }})</option>
+        <option value="unknown" {% if opex == 'unknown' %}selected{% endif %}>Не указан ({{ market.rent_opex_unknown.city_count }})</option>
+      </select>
+    </form>
+    {% endif %}
   </div>
 
-  {% if mode == 'rent' %}
-  <div class="mode-tabs" style="margin-top:0.75rem;">
-    <a class="{% if not opex %}active{% endif %}" href="/market?mode=rent">Авто (лучше без OPEX)</a>
-    <a class="{% if opex == 'without' %}active{% endif %}" href="/market?mode=rent&opex=without">
-      Без OPEX ({{ market.rent_without_opex.city_count }})
-    </a>
-    <a class="{% if opex == 'with' %}active{% endif %}" href="/market?mode=rent&opex=with">
-      С OPEX ({{ market.rent_with_opex.city_count }})
-    </a>
-    <a class="{% if opex == 'unknown' %}active{% endif %}" href="/market?mode=rent&opex=unknown">
-      Не указан ({{ market.rent_opex_unknown.city_count }})
-    </a>
-  </div>
-  <p class="muted" style="margin-top:0.45rem;">
-    Сравниваем аренду внутри одной группы: с OPEX / без OPEX / не указано в тексте.
-  </p>
-  {% endif %}
+  <section class="overview" aria-label="Сводка рынка">
+    <div class="ov-card ov-wide">
+      <div class="ov-l">Средняя $/м² · Киев</div>
+      <div class="ov-n">{{ fmt_psm(market_slice.city_avg_psm, mode) }}</div>
+      <div class="ov-sub">медиана {{ fmt_psm(market_slice.city_median_psm, mode) }} · по {{ market_slice.city_count }} объявл.</div>
+    </div>
+    <div class="ov-card">
+      <div class="ov-n">{{ inventory.sale_total if mode == 'sale' else inventory.rent_total }}</div>
+      <div class="ov-l">Сейчас в сети</div>
+    </div>
+    <div class="ov-card">
+      <div class="ov-n">{{ inventory.sale_no_district if mode == 'sale' else inventory.rent_no_district }}</div>
+      <div class="ov-l">Без района</div>
+    </div>
+  </section>
 
   <section class="section">
     <div class="section-head">
       <h2>По районам</h2>
+      <span class="muted" title="Индекс снятий: как часто снимают, возвращают и уценивают за неделю. Не число сделок.">индекс снятий · подсказка при наведении</span>
     </div>
     {% if not mode_rows %}
       <p class="empty">Пока мало данных по районам.</p>
@@ -67,10 +60,10 @@
             <tr>
               <th>Район</th>
               <th>Объявлений</th>
-              <th>Средняя цена м²</th>
-              <th>Медиана м²</th>
-              <th title="Объявления с ценой и площадью">Посчитано по</th>
-              <th title="Как часто снимают, перевыставляют и уценивают. Не число сделок.">Индекс снятий</th>
+              <th>$/м² ср.</th>
+              <th>$/м² мед.</th>
+              <th title="С ценой и площадью">Выборка</th>
+              <th title="Снятия / возвраты / уценки за неделю, 0–100">Индекс</th>
             </tr>
           </thead>
           <tbody>
@@ -87,11 +80,6 @@
           </tbody>
         </table>
       </div>
-      <p class="muted" style="margin-top:0.65rem;">
-        <strong>Объявлений</strong> — сколько сейчас висит в сети.<br />
-        <strong>Посчитано по</strong> — из скольких объявлений с ценой и площадью взяли среднюю $/м².<br />
-        <strong>Индекс снятий</strong> — активность снятий / возвратов / уценок за неделю (0–100), не факт продаж.
-      </p>
     {% endif %}
   </section>
 
@@ -104,8 +92,8 @@
         <thead>
           <tr>
             <th>Район</th>
-            <th>На продаже</th>
-            <th>В аренде</th>
+            <th>Продажа</th>
+            <th>Аренда</th>
             <th>Продажа $/м²</th>
             <th>Аренда $/м²·мес</th>
           </tr>
@@ -117,19 +105,15 @@
             <td><strong>{{ district_ru(row.district) }}</strong></td>
             <td class="num">{{ row.sale }}</td>
             <td class="num">{{ row.rent }}</td>
-            <td class="num">
-              {% if price and price.sale_avg is not none %}{{ '%.0f'|format(price.sale_avg) }}{% else %}—{% endif %}
-            </td>
-            <td class="num">
-              {% if price and price.rent_avg is not none %}{{ '%.1f'|format(price.rent_avg) }}{% else %}—{% endif %}
-            </td>
+            <td class="num">{% if price and price.sale_avg is not none %}{{ '%.0f'|format(price.sale_avg) }}{% else %}—{% endif %}</td>
+            <td class="num">{% if price and price.rent_avg is not none %}{{ '%.1f'|format(price.rent_avg) }}{% else %}—{% endif %}</td>
           </tr>
           {% endfor %}
           <tr>
-            <td><strong>Всего по Киеву</strong></td>
+            <td><strong>Киев всего</strong></td>
             <td class="num"><strong>{{ inventory.sale_total }}</strong></td>
             <td class="num"><strong>{{ inventory.rent_total }}</strong></td>
-            <td class="muted" colspan="2">включая без района</td>
+            <td class="muted" colspan="2">вкл. без района</td>
           </tr>
         </tbody>
       </table>

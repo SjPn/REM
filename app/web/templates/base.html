@@ -11,22 +11,39 @@
   {% block head %}{% endblock %}
 </head>
 <body>
+  {% set dm = deal_mode if deal_mode is defined else (deal_type if deal_type is defined else (mode if mode is defined else 'sale')) %}
+  {% set nav = active_nav if active_nav is defined else 'listings' %}
+  {% set bucket_q = bucket if bucket is defined else 'likely_deal' %}
   <div class="ambient" aria-hidden="true"></div>
   <header class="shell-top">
     <div class="shell-inner">
-      <a class="brand" href="/?deal_type=sale">
+      <a class="brand" href="/?deal_type={{ dm }}">
         <span class="brand-mark">REM</span>
         <span class="brand-text">
           <span class="brand-name">RealEstateMonitor</span>
-          <span class="brand-tag">Киев · коммерческая недвижимость</span>
+          <span class="brand-tag">Киев · коммерция</span>
         </span>
       </a>
-      <nav class="nav" aria-label="Основная навигация">
-        <a class="nav-link {% if active_nav == 'sale' %}is-active{% endif %}" href="/?deal_type=sale">Продажа</a>
-        <a class="nav-link {% if active_nav == 'rent' %}is-active{% endif %}" href="/?deal_type=rent">Аренда</a>
-        <a class="nav-link {% if active_nav == 'market' %}is-active{% endif %}" href="/market?mode=sale">Рынок</a>
-        <a class="nav-link {% if active_nav == 'deals' %}is-active{% endif %}" href="/deals?bucket=likely_deal">Возможные сделки</a>
-      </nav>
+
+      <div class="header-controls">
+        <div class="mode-switch" role="group" aria-label="Тип сделки">
+          {% if nav == 'market' %}
+            <a class="mode-btn {% if dm == 'sale' %}is-on{% endif %}" href="/market?mode=sale">Продажа</a>
+            <a class="mode-btn {% if dm == 'rent' %}is-on{% endif %}" href="/market?mode=rent">Аренда</a>
+          {% elif nav == 'deals' %}
+            <a class="mode-btn {% if dm == 'sale' %}is-on{% endif %}" href="/deals?bucket={{ bucket_q }}&deal_type=sale">Продажа</a>
+            <a class="mode-btn {% if dm == 'rent' %}is-on{% endif %}" href="/deals?bucket={{ bucket_q }}&deal_type=rent">Аренда</a>
+          {% else %}
+            <a class="mode-btn {% if dm == 'sale' %}is-on{% endif %}" href="/?deal_type=sale">Продажа</a>
+            <a class="mode-btn {% if dm == 'rent' %}is-on{% endif %}" href="/?deal_type=rent">Аренда</a>
+          {% endif %}
+        </div>
+        <nav class="nav" aria-label="Разделы">
+          <a class="nav-link {% if nav == 'listings' %}is-active{% endif %}" href="/?deal_type={{ dm }}">Объявления</a>
+          <a class="nav-link {% if nav == 'market' %}is-active{% endif %}" href="/market?mode={{ dm }}">Рынок</a>
+          <a class="nav-link {% if nav == 'deals' %}is-active{% endif %}" href="/deals?bucket=likely_deal&deal_type={{ dm }}">Сделки</a>
+        </nav>
+      </div>
     </div>
   </header>
 
@@ -37,7 +54,7 @@
   <footer class="shell-foot">
     <div class="shell-inner foot-row">
       <span>RealEstateMonitor <span class="muted">(REM)</span></span>
-      <span class="muted">Оценки сделок · не юридический факт</span>
+      <span class="muted">Оценки · не юридический факт</span>
     </div>
   </footer>
   {% block scripts %}{% endblock %}

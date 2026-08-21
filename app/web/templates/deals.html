@@ -1,28 +1,32 @@
 {% extends "base.html" %}
 {% set active_nav = "deals" %}
-{% block title %}Возможные сделки — REM{% endblock %}
+{% set deal_mode = deal_type %}
+{% block title %}Сделки · {{ 'продажа' if deal_type == 'sale' else 'аренда' }} — REM{% endblock %}
 {% block content %}
-  <p class="page-kicker">Оценка исчезнувших объявлений</p>
-  <h1 class="page-title">Возможные сделки</h1>
-  <p class="page-lead">Когда объявление пропадает с сайтов, система оценивает: похоже на сделку или просто сняли. Это оценка, не факт.</p>
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Сделки</h1>
+      <p class="page-lead">Оценка исчезнувших объявлений: похоже на сделку или просто сняли. Это оценка, не факт.</p>
+    </div>
+  </div>
 
-  <nav class="deal-tabs" aria-label="Категории">
-    <a class="{% if bucket == 'likely_deal' %}active{% endif %}" href="/deals?bucket=likely_deal">
-      Похоже на сделку ({{ counts.likely_deal }})
+  <nav class="seg-tabs" aria-label="Категории">
+    <a class="{% if bucket == 'likely_deal' %}is-on{% endif %}" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">
+      Похоже на сделку <b>{{ counts.likely_deal }}</b>
     </a>
-    <a class="{% if bucket == 'ambiguous' %}active{% endif %}" href="/deals?bucket=ambiguous">
-      Неясно ({{ counts.ambiguous }})
+    <a class="{% if bucket == 'ambiguous' %}is-on{% endif %}" href="/deals?bucket=ambiguous&deal_type={{ deal_type }}">
+      Неясно <b>{{ counts.ambiguous }}</b>
     </a>
-    <a class="{% if bucket == 'likely_withdrawn' %}active{% endif %}" href="/deals?bucket=likely_withdrawn">
-      Скорее просто сняли ({{ counts.likely_withdrawn }})
+    <a class="{% if bucket == 'likely_withdrawn' %}is-on{% endif %}" href="/deals?bucket=likely_withdrawn&deal_type={{ deal_type }}">
+      Скорее сняли <b>{{ counts.likely_withdrawn }}</b>
     </a>
-    <a class="{% if not bucket %}active{% endif %}" href="/deals?bucket=">
-      Все ({{ counts.all }})
+    <a class="{% if not bucket %}is-on{% endif %}" href="/deals?bucket=&deal_type={{ deal_type }}">
+      Все <b>{{ counts.all }}</b>
     </a>
   </nav>
 
   {% if not cards %}
-    <p class="empty">Пока пусто. Появятся после ежедневного сбора, когда объявления начнут исчезать с сайтов.</p>
+    <p class="empty">Пока пусто. Появятся после ежедневного сбора, когда объявления начнут исчезать.</p>
   {% else %}
     <div class="deal-list">
       {% for c in cards %}
@@ -42,10 +46,8 @@
               {% if lst and lst.address_raw %}{{ lst.address_raw }}
               {% elif prop and prop.address_norm %}{{ prop.address_norm }}
               {% else %}адрес неизвестен{% endif %}
-              {% if lst and lst.city %} · {{ lst.city }}{% endif %}
             </div>
             <div class="listing-meta">
-              {% if lst %}<span class="tag {{ lst.deal_type }}">{{ ua_deal_type(lst.deal_type) }}</span>{% endif %}
               {% if lst and lst.property_type %}<span class="tag">{{ lst.property_type }}</span>{% endif %}
               {% if lst and lst.area_sqm %}<span class="muted">{{ lst.area_sqm }} м²</span>{% endif %}
               {% if lst %}<span class="price-inline">{{ fmt_price(lst.price, lst.currency) }}</span>{% endif %}
@@ -55,7 +57,7 @@
               {% endif %}
             </div>
             <ul class="criteria">
-              {% for f in c.features[:4] %}
+              {% for f in c.features[:3] %}
                 <li>
                   <span class="pts {% if f.points|int >= 0 %}plus{% else %}minus{% endif %}">
                     {% if f.points|int > 0 %}+{% endif %}{{ f.points }}
@@ -69,10 +71,10 @@
             <div class="listing-links row">
               <a href="/deals/{{ h.id }}">почему так →</a>
               {% if lst and lst.url %}
-                <a href="{{ lst.url }}" target="_blank" rel="noopener noreferrer">открыть объявление ↗</a>
+                <a href="{{ lst.url }}" target="_blank" rel="noopener noreferrer">сайт ↗</a>
               {% endif %}
               {% if prop %}
-                <a href="/properties/{{ prop.id }}">карточка объекта</a>
+                <a href="/properties/{{ prop.id }}">в REM</a>
               {% endif %}
             </div>
           </div>

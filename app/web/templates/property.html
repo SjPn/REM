@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% set active_nav = "listings" %}
+{% set deal_mode = property.deal_type or (listings[0].deal_type if listings else 'sale') %}
 {% block title %}Объект #{{ property.id }} — REM{% endblock %}
 {% block content %}
   <p class="page-kicker">Объект #{{ property.id }}</p>

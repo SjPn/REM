@@ -56,7 +56,7 @@ def _fmt_price(price: float | None, currency: str | None) -> str:
 def _fmt_psm(value: float | None, deal_type: str = "sale") -> str:
     if value is None:
         return "—"
-    suffix = "/м²" if deal_type == "sale" else "/м²·міс"
+    suffix = "/м²" if deal_type == "sale" else "/м²·мес"
     if value >= 100:
         return f"{value:,.0f} $".replace(",", " ") + suffix
     return f"{value:.1f} $".replace(",", " ") + suffix
@@ -96,7 +96,7 @@ def _fmt_listing_psm(
     if value is None:
         return ""
     cur = (currency or "").upper()
-    suffix = "/м²·міс" if (deal_type or "").lower() == "rent" else "/м²"
+    suffix = "/м²·мес" if (deal_type or "").lower() == "rent" else "/м²"
     if value >= 100:
         num = f"{value:,.0f}".replace(",", " ")
     else:
@@ -620,39 +620,48 @@ def deals_page(
     request: Request,
     db: Session = Depends(get_db),
     bucket: str | None = Query("likely_deal"),
+    deal_type: str = Query("sale", pattern="^(sale|rent)$"),
 ):
     q = select(DealHypothesis).order_by(
         DealHypothesis.score.desc(), DealHypothesis.created_at.desc()
     )
     if bucket:
         q = q.where(DealHypothesis.bucket == bucket)
-    hyps = db.scalars(q.limit(100)).all()
+    hyps = db.scalars(q.limit(200)).all()
     cards = [_deal_card(db, h) for h in hyps]
+    cards = [
+        c
+        for c in cards
+        if c["listing"] is not None and c["listing"].deal_type == deal_type
+    ][:100]
+
+    def _count_for(bucket_name: str | None) -> int:
+        hq = select(DealHypothesis)
+        if bucket_name:
+            hq = hq.where(DealHypothesis.bucket == bucket_name)
+        n = 0
+        for h in db.scalars(hq.limit(500)).all():
+            card = _deal_card(db, h)
+            lst = card["listing"]
+            if lst is not None and lst.deal_type == deal_type:
+                n += 1
+        return n
+
     counts = {
-        "likely_deal": db.scalar(
-            select(func.count())
-            .select_from(DealHypothesis)
-            .where(DealHypothesis.bucket == "likely_deal")
-        )
-        or 0,
-        "ambiguous": db.scalar(
-            select(func.count())
-            .select_from(DealHypothesis)
-            .where(DealHypothesis.bucket == "ambiguous")
-        )
-        or 0,
-        "likely_withdrawn": db.scalar(
-            select(func.count())
-            .select_from(DealHypothesis)
-            .where(DealHypothesis.bucket == "likely_withdrawn")
-        )
-        or 0,
-        "all": db.scalar(select(func.count()).select_from(DealHypothesis)) or 0,
+        "likely_deal": _count_for("likely_deal"),
+        "ambiguous": _count_for("ambiguous"),
+        "likely_withdrawn": _count_for("likely_withdrawn"),
+        "all": _count_for(None),
     }
     return templates.TemplateResponse(
         request,
         "deals.html",
-        {"cards": cards, "bucket": bucket or "", "counts": counts},
+        {
+            "cards": cards,
+            "bucket": bucket or "",
+            "counts": counts,
+            "deal_type": deal_type,
+        },
     )
 
 

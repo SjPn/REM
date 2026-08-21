@@ -1,132 +1,72 @@
 {% extends "base.html" %}
-{% set active_nav = deal_type %}
-{% block title %}{{ 'Продажа' if deal_type == 'sale' else 'Аренда' }} — REM{% endblock %}
+{% set active_nav = "listings" %}
+{% set deal_mode = deal_type %}
+{% block title %}Объявления · {{ 'продажа' if deal_type == 'sale' else 'аренда' }} — REM{% endblock %}
 {% block content %}
-  <p class="page-kicker">{{ 'Продажа' if deal_type == 'sale' else 'Аренда' }} · Киев</p>
-  <h1 class="page-title">{{ 'Продажа' if deal_type == 'sale' else 'Аренда' }} коммерции</h1>
-  <p class="page-lead">
-    В базе сейчас:
-    <strong>{{ inventory.sale_total }}</strong> на продаже ·
-    <strong>{{ inventory.rent_total }}</strong> в аренде.
-  </p>
-
-  <div class="mode-tabs" aria-label="Режим">
-    <a class="{% if deal_type == 'sale' %}active{% endif %}" href="/?deal_type=sale">Продажа ({{ inventory.sale_total }})</a>
-    <a class="{% if deal_type == 'rent' %}active{% endif %}" href="/?deal_type=rent">Аренда ({{ inventory.rent_total }})</a>
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Объявления</h1>
+      <p class="page-lead">
+        {% if deal_type == 'sale' %}
+          В сети <strong>{{ inventory.sale_total }}</strong> на продаже
+        {% else %}
+          В сети <strong>{{ inventory.rent_total }}</strong> в аренде
+        {% endif %}
+        · средняя {{ fmt_psm(market_slice.city_avg_psm, deal_type) }}
+        {% if deal_type == 'rent' and rent_slice_label %} · {{ rent_slice_label }}{% endif %}
+      </p>
+    </div>
   </div>
 
-  <section class="pulse" aria-label="Сводка за сутки">
-    <a class="pulse-item is-hot" href="/?deal_type={{ deal_type }}&period=24h">
-      <div class="pulse-n">{{ activity.new_listings }}</div>
-      <div class="pulse-l">Новые объявления →</div>
+  <section class="overview" aria-label="Сводка">
+    <a class="ov-card is-accent" href="/?deal_type={{ deal_type }}&period=24h">
+      <div class="ov-n">{{ activity.new_listings }}</div>
+      <div class="ov-l">Новые за сутки</div>
     </a>
-    <div class="pulse-item">
-      <div class="pulse-n">{{ activity.sold_or_rented }}</div>
-      <div class="pulse-l">Помечено продано/сдано</div>
+    <div class="ov-card">
+      <div class="ov-n">{{ activity.vanished }}</div>
+      <div class="ov-l">Исчезли</div>
     </div>
-    <div class="pulse-item">
-      <div class="pulse-n">{{ activity.vanished }}</div>
-      <div class="pulse-l">Исчезли с сайтов</div>
+    <div class="ov-card">
+      <div class="ov-n">{{ activity.price_drops }}</div>
+      <div class="ov-l">Уценили</div>
     </div>
-    <div class="pulse-item">
-      <div class="pulse-n">{{ activity.price_drops }}</div>
-      <div class="pulse-l">Уценили</div>
-    </div>
-    <a class="pulse-item is-hot" href="/deals?bucket=likely_deal">
-      <div class="pulse-n">{{ activity.likely_deals }}</div>
-      <div class="pulse-l">Похоже на сделку →</div>
+    <a class="ov-card is-accent" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">
+      <div class="ov-n">{{ activity.likely_deals }}</div>
+      <div class="ov-l">Похоже на сделку</div>
     </a>
-    <div class="pulse-item">
-      <div class="pulse-n">{{ activity.relisted }}</div>
-      <div class="pulse-l">Вернули в сеть</div>
+    <div class="ov-card ov-wide">
+      <div class="ov-l">Средняя $/м² · Киев</div>
+      <div class="ov-n ov-n-sm">{{ fmt_psm(market_slice.city_avg_psm, deal_type) }}</div>
+      <div class="ov-sub">
+        медиана {{ fmt_psm(market_slice.city_median_psm, deal_type) }}
+        · по {{ market_slice.city_count }} объявл.
+      </div>
     </div>
   </section>
 
-  <section class="section">
-    <div class="section-head">
-      <h2>{% if deal_type == 'sale' %}Цены за м² · продажа{% else %}Цены за м² · аренда{% endif %}</h2>
-      <a class="link-more" href="/market?mode={{ deal_type }}">Все районы →</a>
+  {% if mode_rows %}
+  <section class="district-preview">
+    <div class="section-head tight">
+      <h2>Районы</h2>
+      <a class="link-more" href="/market?mode={{ deal_type }}{% if opex %}&opex={{ opex }}{% endif %}">Все →</a>
     </div>
-    <div class="market-strip">
-      <div class="market-tile">
-        <div class="l">Средняя по Киеву</div>
-        <div class="n">{{ fmt_psm(market_slice.city_avg_psm, deal_type) }}</div>
-        <div class="muted">
-          медиана {{ fmt_psm(market_slice.city_median_psm, deal_type) }} ·
-          посчитано по {{ market_slice.city_count }} объявлениям
-          {% if deal_type == 'rent' %} · {{ rent_slice_label }}{% endif %}
-        </div>
+    <div class="district-chips">
+      {% for row in mode_rows[:6] %}
+      <div class="d-chip" title="{{ row.stress_detail }}">
+        <span class="d-name">{{ district_ru(row.district) }}</span>
+        <span class="d-meta">
+          <strong>{% if row.avg_psm is not none %}{{ '%.0f'|format(row.avg_psm) if deal_type == 'sale' else '%.1f'|format(row.avg_psm) }}{% else %}—{% endif %}</strong>
+          <span class="muted">· {{ row.active }}</span>
+        </span>
       </div>
-      <div class="market-tile">
-        <div class="l">{% if deal_type == 'sale' %}Сейчас на продаже{% else %}Сейчас в аренде{% endif %}</div>
-        <div class="n">
-          {% if deal_type == 'sale' %}{{ inventory.sale_total }}{% else %}{{ inventory.rent_total }}{% endif %}
-        </div>
-        <div class="muted">
-          {% if deal_type == 'sale' %}аренда: {{ inventory.rent_total }}{% else %}продажа: {{ inventory.sale_total }}{% endif %}
-        </div>
-      </div>
+      {% endfor %}
     </div>
-
-    {% if deal_type == 'rent' %}
-    <div class="mode-tabs" style="margin-top:0.75rem;">
-      <a class="{% if not opex %}active{% endif %}" href="/?deal_type=rent">Авто (лучше без OPEX)</a>
-      <a class="{% if opex == 'without' %}active{% endif %}" href="/?deal_type=rent&opex=without">
-        Без OPEX ({{ market.rent_without_opex.city_count }})
-      </a>
-      <a class="{% if opex == 'with' %}active{% endif %}" href="/?deal_type=rent&opex=with">
-        С OPEX ({{ market.rent_with_opex.city_count }})
-      </a>
-      <a class="{% if opex == 'unknown' %}active{% endif %}" href="/?deal_type=rent&opex=unknown">
-        Не указан ({{ market.rent_opex_unknown.city_count }})
-      </a>
-    </div>
-    <p class="muted" style="margin-top:0.45rem;">
-      OPEX (эксплуатация) часто сидит в цене аренды. Сравниваем только одинаковые группы;
-      если в тексте не написано — попадает в «не указан».
-    </p>
-    {% endif %}
-
-    {% if mode_rows %}
-    <div class="table-wrap" style="margin-top:0.85rem;">
-      <table>
-        <thead>
-          <tr>
-            <th>Район</th>
-            <th>Объявлений</th>
-            <th>Средняя цена м²</th>
-            <th>Медиана м²</th>
-            <th title="Только объявления, где есть и цена, и площадь">Посчитано по</th>
-            <th title="Насколько часто за неделю снимают, перевыставляют и снижают цену. Не число реальных сделок.">Индекс снятий</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in mode_rows %}
-          <tr>
-            <td><strong>{{ district_ru(row.district) }}</strong></td>
-            <td class="num">{{ row.active }}</td>
-            <td class="num">{% if row.avg_psm is not none %}{{ '%.0f'|format(row.avg_psm) if deal_type == 'sale' else '%.1f'|format(row.avg_psm) }}{% else %}—{% endif %}</td>
-            <td class="num">{% if row.median_psm is not none %}{{ '%.0f'|format(row.median_psm) if deal_type == 'sale' else '%.1f'|format(row.median_psm) }}{% else %}—{% endif %}</td>
-            <td class="muted">{{ row.sample_n or '—' }}</td>
-            <td class="num" title="{{ row.stress_detail }}">
-              {% if row.stress is not none %}{{ row.stress }}{% else %}—{% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <p class="muted" style="margin-top:0.55rem;">
-      <strong>Посчитано по</strong> — сколько объявлений с ценой и площадью использовали для средней $/м².<br />
-      <strong>Индекс снятий</strong> (0–100) — как часто в районе за неделю снимают объявления, снова выставляют и уценивают.
-      Это не «сколько продали», а сигнал активности на рынке.
-    </p>
-    {% endif %}
   </section>
+  {% endif %}
 
   <form class="filters" method="get" action="/">
     <input type="hidden" name="deal_type" value="{{ deal_type }}" />
-    {% if opex %}<input type="hidden" name="opex" value="{{ opex }}" />{% endif %}
     <input type="search" name="q" value="{{ q }}" placeholder="Улица, район, название…" aria-label="Поиск" />
     <select name="source" aria-label="Сайт">
       <option value="">Все сайты</option>
@@ -145,6 +85,14 @@
       <option value="24h" {% if period == '24h' %}selected{% endif %}>За сутки</option>
       <option value="7d" {% if period == '7d' %}selected{% endif %}>За неделю</option>
     </select>
+    {% if deal_type == 'rent' %}
+    <select name="opex" aria-label="OPEX в цене">
+      <option value="" {% if not opex %}selected{% endif %}>OPEX: авто</option>
+      <option value="without" {% if opex == 'without' %}selected{% endif %}>Без OPEX ({{ market.rent_without_opex.city_count }})</option>
+      <option value="with" {% if opex == 'with' %}selected{% endif %}>С OPEX ({{ market.rent_with_opex.city_count }})</option>
+      <option value="unknown" {% if opex == 'unknown' %}selected{% endif %}>Не указан ({{ market.rent_opex_unknown.city_count }})</option>
+    </select>
+    {% endif %}
     <label class="filter-check">
       <input type="checkbox" name="below_market" value="1" {% if below_market %}checked{% endif %} />
       Ниже рынка
@@ -152,8 +100,34 @@
     <button type="submit">Показать</button>
   </form>
 
-  <section class="section" style="margin-top:0;">
-    <div class="section-head"><h2>Мои подборки</h2></div>
+  {% if watches %}
+  <div class="watch-strip">
+    <span class="watch-label">Подборки:</span>
+    {% for w in watches %}
+      <span class="watch-item">
+        <a class="watch-chip" href="/?q={{ w.q or '' }}&source={{ w.source or '' }}&deal_type={{ w.deal_type or deal_type }}&segment={{ w.segment or '' }}&period={{ w.period or '' }}&below_market={{ 1 if w.below_market else 0 }}">{{ w.name }}</a>
+        <form method="post" action="/watches/{{ w.id }}/delete" style="display:inline;">
+          <button class="ghost" type="submit" aria-label="Удалить">✕</button>
+        </form>
+      </span>
+    {% endfor %}
+    <details class="watch-save">
+      <summary>Сохранить текущую</summary>
+      <form class="actions-bar" method="post" action="/watches">
+        <input type="hidden" name="q" value="{{ q }}" />
+        <input type="hidden" name="source" value="{{ source }}" />
+        <input type="hidden" name="deal_type" value="{{ deal_type }}" />
+        <input type="hidden" name="segment" value="{{ segment }}" />
+        <input type="hidden" name="period" value="{{ period }}" />
+        <input type="hidden" name="below_market" value="{{ below_market }}" />
+        <input name="name" placeholder="Название…" required maxlength="120" />
+        <button type="submit">OK</button>
+      </form>
+    </details>
+  </div>
+  {% else %}
+  <details class="watch-save lone">
+    <summary>Сохранить фильтр как подборку</summary>
     <form class="actions-bar" method="post" action="/watches">
       <input type="hidden" name="q" value="{{ q }}" />
       <input type="hidden" name="source" value="{{ source }}" />
@@ -161,33 +135,20 @@
       <input type="hidden" name="segment" value="{{ segment }}" />
       <input type="hidden" name="period" value="{{ period }}" />
       <input type="hidden" name="below_market" value="{{ below_market }}" />
-      <input name="name" placeholder="Название подборки…" required maxlength="120" />
-      <button type="submit">Сохранить</button>
+      <input name="name" placeholder="Название…" required maxlength="120" />
+      <button type="submit">OK</button>
     </form>
-    {% if watches %}
-      <div class="watch-list">
-        {% for w in watches %}
-          <div class="watch-item">
-            <a href="/?q={{ w.q or '' }}&source={{ w.source or '' }}&deal_type={{ w.deal_type or deal_type }}&segment={{ w.segment or '' }}&period={{ w.period or '' }}&below_market={{ 1 if w.below_market else 0 }}">
-              {{ w.name }}
-            </a>
-            <form method="post" action="/watches/{{ w.id }}/delete" style="display:inline;">
-              <button class="ghost" type="submit">✕</button>
-            </form>
-          </div>
-        {% endfor %}
-      </div>
-    {% endif %}
-  </section>
+  </details>
+  {% endif %}
 
-  <section>
+  <section class="section tight-top">
     <div class="section-head">
-      <h2>Список объявлений</h2>
-      <span class="muted">{{ total }} с ценой · стр. {{ page }}/{{ pages }}</span>
+      <h2>Список</h2>
+      <span class="muted">{{ total }} · стр. {{ page }}/{{ pages }}</span>
     </div>
 
     {% if not listings %}
-      <p class="empty">Нет объявлений. Запустите сбор данных или смените фильтры.</p>
+      <p class="empty">Нет объявлений. Запустите сбор или смените фильтры.</p>
     {% else %}
       <div class="listing-list">
         {% for x in listings %}
@@ -199,24 +160,22 @@
             </a>
             <div class="listing-meta">
               <span class="tag">{{ x.source }}</span>
-              <span class="tag {{ x.deal_type }}">{{ ua_deal_type(x.deal_type) }}</span>
               {% if x.property_type %}<span class="tag">{{ x.property_type }}</span>{% endif %}
               {% if sig.seller %}<span class="tag seller-{{ sig.seller }}">{{ ua_seller(sig.seller) }}</span>{% endif %}
-              {% if sig.opex %}
+              {% if sig.opex and sig.opex != 'unknown' %}
                 <span class="tag opex-{{ sig.opex }}">{{ ua_opex(sig.opex) }}</span>
               {% endif %}
               {% if sig.below_market %}
-                <span class="tag below">ниже рынка на {{ sig.discount_pct }}%</span>
+                <span class="tag below">ниже рынка {{ sig.discount_pct }}%</span>
               {% endif %}
               {% if sig.portals and sig.portals > 1 %}
-                <span class="tag">на {{ sig.portals }} сайтах</span>
+                <span class="tag">{{ sig.portals }} сайта</span>
               {% endif %}
               {% if sig.cap_rate_pct %}<span class="tag">доходность {{ sig.cap_rate_pct }}%</span>{% endif %}
             </div>
             <div class="listing-addr">
               {% if x.address_raw %}{{ x.address_raw }}{% else %}<span class="warn-text">адрес не найден</span>{% endif %}
               {% if x.district %} · {{ district_ru(x.district) }}{% endif %}
-              {% if x.city %} · {{ x.city }}{% endif %}
             </div>
           </div>
           <div class="listing-side">
@@ -227,8 +186,8 @@
               {% if x.area_sqm %}{{ x.area_sqm }} м²{% else %}<span class="warn-text">площадь ?</span>{% endif %}
             </div>
             <div class="listing-links">
-              <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">открыть объявление ↗</a>
-              {% if x.property_id %}<a href="/properties/{{ x.property_id }}">карточка объекта</a>{% endif %}
+              <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">сайт ↗</a>
+              {% if x.property_id %}<a href="/properties/{{ x.property_id }}">в REM</a>{% endif %}
             </div>
           </div>
         </article>

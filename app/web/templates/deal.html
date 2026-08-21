@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% set active_nav = "deals" %}
+{% set deal_mode = (listing.deal_type if listing else None) or (property.deal_type if property else None) or 'sale' %}
 {% block title %}Оценка #{{ hyp.id }} — REM{% endblock %}
 {% block content %}
-  <p class="page-kicker"><a href="/deals?bucket=likely_deal">← Возможные сделки</a> · оценка #{{ hyp.id }}</p>
+  <p class="page-kicker"><a href="/deals?bucket=likely_deal&deal_type={{ deal_mode }}">← Сделки</a> · оценка #{{ hyp.id }}</p>
   <section class="deal-hero">
     <div>
       <h1 class="page-title" style="margin:0 0 0.45rem;">
