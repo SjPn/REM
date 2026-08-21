@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -18,14 +18,14 @@
         <span class="brand-mark">EM</span>
         <span class="brand-text">
           <span class="brand-name">EstateMonitor</span>
-          <span class="brand-tag">Київ · комерційна нерухомість</span>
+          <span class="brand-tag">Киев · коммерческая недвижимость</span>
         </span>
       </a>
-      <nav class="nav" aria-label="Основна навігація">
-        <a class="nav-link {% if active_nav == 'sale' %}is-active{% endif %}" href="/?deal_type=sale">Продаж</a>
-        <a class="nav-link {% if active_nav == 'rent' %}is-active{% endif %}" href="/?deal_type=rent">Оренда</a>
-        <a class="nav-link {% if active_nav == 'market' %}is-active{% endif %}" href="/market?mode=sale">Ринок</a>
-        <a class="nav-link {% if active_nav == 'deals' %}is-active{% endif %}" href="/deals?bucket=likely_deal">Угоди</a>
+      <nav class="nav" aria-label="Основная навигация">
+        <a class="nav-link {% if active_nav == 'sale' %}is-active{% endif %}" href="/?deal_type=sale">Продажа</a>
+        <a class="nav-link {% if active_nav == 'rent' %}is-active{% endif %}" href="/?deal_type=rent">Аренда</a>
+        <a class="nav-link {% if active_nav == 'market' %}is-active{% endif %}" href="/market?mode=sale">Рынок</a>
+        <a class="nav-link {% if active_nav == 'deals' %}is-active{% endif %}" href="/deals?bucket=likely_deal">Сделки</a>
       </nav>
     </div>
   </header>
@@ -37,7 +37,7 @@
   <footer class="shell-foot">
     <div class="shell-inner foot-row">
       <span>EstateMonitor</span>
-      <span class="muted">Гіпотези угод · не юридичний факт</span>
+      <span class="muted">Гипотезы сделок · не юридический факт</span>
     </div>
   </footer>
   {% block scripts %}{% endblock %}

@@ -1,28 +1,28 @@
 {% extends "base.html" %}
 {% set active_nav = "deals" %}
-{% block title %}Ймовірні угоди — EstateMonitor{% endblock %}
+{% block title %}Вероятные сделки — EstateMonitor{% endblock %}
 {% block content %}
-  <p class="page-kicker">Гіпотези</p>
-  <h1 class="page-title">Ймовірні угоди</h1>
-  <p class="page-lead">Система оцінює зниклі оголошення за критеріями. Це гіпотеза, не підтверджений факт угоди.</p>
+  <p class="page-kicker">Гипотезы</p>
+  <h1 class="page-title">Вероятные сделки</h1>
+  <p class="page-lead">Система оценивает исчезнувшие объявления по критериям. Это гипотеза, не подтверждённый факт сделки.</p>
 
-  <nav class="deal-tabs" aria-label="Категорії гіпотез">
+  <nav class="deal-tabs" aria-label="Категории гипотез">
     <a class="{% if bucket == 'likely_deal' %}active{% endif %}" href="/deals?bucket=likely_deal">
-      Ймовірні угоди ({{ counts.likely_deal }})
+      Вероятные сделки ({{ counts.likely_deal }})
     </a>
     <a class="{% if bucket == 'ambiguous' %}active{% endif %}" href="/deals?bucket=ambiguous">
-      Невизначені ({{ counts.ambiguous }})
+      Неопределённые ({{ counts.ambiguous }})
     </a>
     <a class="{% if bucket == 'likely_withdrawn' %}active{% endif %}" href="/deals?bucket=likely_withdrawn">
-      Скоріше зняли ({{ counts.likely_withdrawn }})
+      Скорее сняли ({{ counts.likely_withdrawn }})
     </a>
     <a class="{% if not bucket %}active{% endif %}" href="/deals?bucket=">
-      Усі ({{ counts.all }})
+      Все ({{ counts.all }})
     </a>
   </nav>
 
   {% if not cards %}
-    <p class="empty">Поки немає гіпотез у цій категорії. Вони з’являться після daily crawl, коли оголошення зникнуть з порталів.</p>
+    <p class="empty">Пока нет гипотез в этой категории. Они появятся после daily crawl, когда объявления исчезнут с порталов.</p>
   {% else %}
     <div class="deal-list">
       {% for c in cards %}
@@ -36,12 +36,12 @@
           </div>
           <div class="deal-body">
             <a class="listing-title" href="/deals/{{ h.id }}">
-              {{ (lst.title if lst else None) or (prop.title if prop else None) or ('Обʼєкт #' ~ (prop.id if prop else h.id)) }}
+              {{ (lst.title if lst else None) or (prop.title if prop else None) or ('Объект #' ~ (prop.id if prop else h.id)) }}
             </a>
             <div class="listing-addr">
               {% if lst and lst.address_raw %}{{ lst.address_raw }}
               {% elif prop and prop.address_norm %}{{ prop.address_norm }}
-              {% else %}адреса невідома{% endif %}
+              {% else %}адрес неизвестен{% endif %}
               {% if lst and lst.city %} · {{ lst.city }}{% endif %}
             </div>
             <div class="listing-meta">
@@ -63,16 +63,16 @@
                   {{ f.detail }}
                 </li>
               {% else %}
-                <li class="muted">Немає розшифровки критеріїв</li>
+                <li class="muted">Нет расшифровки критериев</li>
               {% endfor %}
             </ul>
             <div class="listing-links row">
-              <a href="/deals/{{ h.id }}">деталі рішення →</a>
+              <a href="/deals/{{ h.id }}">детали решения →</a>
               {% if lst and lst.url %}
-                <a href="{{ lst.url }}" target="_blank" rel="noopener noreferrer">на порталі ↗</a>
+                <a href="{{ lst.url }}" target="_blank" rel="noopener noreferrer">на портале ↗</a>
               {% endif %}
               {% if prop %}
-                <a href="/properties/{{ prop.id }}">карточка обʼєкта</a>
+                <a href="/properties/{{ prop.id }}">карточка объекта</a>
               {% endif %}
             </div>
           </div>

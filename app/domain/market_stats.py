@@ -22,6 +22,25 @@ KYIV_DISTRICTS = [
     "Деснянський",
 ]
 
+KYIV_DISTRICT_RU = {
+    "Печерський": "Печерский",
+    "Шевченківський": "Шевченковский",
+    "Голосіївський": "Голосеевский",
+    "Подільський": "Подольский",
+    "Дарницький": "Дарницкий",
+    "Дніпровський": "Днепровский",
+    "Солом'янський": "Соломенский",
+    "Оболонський": "Оболонский",
+    "Святошинський": "Святошинский",
+    "Деснянський": "Деснянский",
+}
+
+
+def district_label_ru(name: str | None) -> str:
+    if not name:
+        return ""
+    return KYIV_DISTRICT_RU.get(name, name)
+
 # Approximate FX for market averages (overridable via settings later)
 _UAH_PER_USD = 41.0
 _EUR_PER_USD = 0.92

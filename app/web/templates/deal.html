@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% set active_nav = "deals" %}
-{% block title %}Угода #{{ hyp.id }} — EstateMonitor{% endblock %}
+{% block title %}Сделка #{{ hyp.id }} — EstateMonitor{% endblock %}
 {% block content %}
-  <p class="page-kicker"><a href="/deals?bucket=likely_deal">← Ймовірні угоди</a> · гіпотеза #{{ hyp.id }}</p>
+  <p class="page-kicker"><a href="/deals?bucket=likely_deal">← Вероятные сделки</a> · гипотеза #{{ hyp.id }}</p>
   <section class="deal-hero">
     <div>
       <h1 class="page-title" style="margin:0 0 0.45rem;">
-        {{ (listing.title if listing else None) or (property.title if property else None) or 'Обʼєкт' }}
+        {{ (listing.title if listing else None) or (property.title if property else None) or 'Объект' }}
       </h1>
       <p class="listing-addr">
         {% if listing and listing.address_raw %}{{ listing.address_raw }}
@@ -23,20 +23,20 @@
     <div class="deal-score big">
       <div class="score-n">{{ hyp.score }}</div>
       <span class="tag {{ hyp.bucket }}">{{ ua_bucket(hyp.bucket) }}</span>
-      <div class="muted">ймовірність угоди</div>
+      <div class="muted">вероятность сделки</div>
     </div>
   </section>
 
   <section class="section" style="margin-top:0;">
     <div class="section-head">
-      <h2>Чому так вирішили</h2>
+      <h2>Почему так решили</h2>
     </div>
-    <p class="muted" style="margin-top:0;">Score = сума критеріїв (0–100). ≥70 — ймовірна угода, 40–69 — невизначено, &lt;40 — скоріше зняли з продажу.</p>
+    <p class="muted" style="margin-top:0;">Score = сумма критериев (0–100). ≥70 — вероятная сделка, 40–69 — неопределённо, &lt;40 — скорее сняли с продажи.</p>
     {% if features %}
       <div class="table-wrap" style="margin-top:0.85rem;">
         <table class="criteria-table">
           <thead>
-            <tr><th>Бали</th><th>Критерій</th><th>Пояснення</th></tr>
+            <tr><th>Баллы</th><th>Критерий</th><th>Пояснение</th></tr>
           </thead>
           <tbody>
             {% for f in features %}
@@ -50,17 +50,17 @@
             {% endfor %}
           </tbody>
           <tfoot>
-            <tr><td><strong>{{ hyp.score }}</strong></td><td colspan="2">підсумок → {{ ua_bucket(hyp.bucket) }}</td></tr>
+            <tr><td><strong>{{ hyp.score }}</strong></td><td colspan="2">итог → {{ ua_bucket(hyp.bucket) }}</td></tr>
           </tfoot>
         </table>
       </div>
     {% else %}
-      <p class="empty">Немає features у гіпотезі.</p>
+      <p class="empty">Нет features у гипотезы.</p>
     {% endif %}
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>Обʼєкт / оголошення</h2></div>
+    <div class="section-head"><h2>Объект / объявления</h2></div>
     <div class="listing-list">
       {% for x in listings %}
       <article class="listing">
@@ -78,26 +78,26 @@
           {% if psm %}<div class="psm">{{ psm }}</div>{% endif %}
           <div class="area">{% if x.area_sqm %}{{ x.area_sqm }} м²{% else %}—{% endif %}</div>
           <div class="listing-links">
-            <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">на порталі ↗</a>
+            <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">на портале ↗</a>
           </div>
         </div>
       </article>
       {% else %}
-        <p class="empty">Немає привʼязаних оголошень.</p>
+        <p class="empty">Нет привязанных объявлений.</p>
       {% endfor %}
     </div>
     {% if property %}
-      <p style="margin-top:0.85rem;"><a class="link-more" href="/properties/{{ property.id }}">повна карточка обʼєкта #{{ property.id }} →</a></p>
+      <p style="margin-top:0.85rem;"><a class="link-more" href="/properties/{{ property.id }}">полная карточка объекта #{{ property.id }} →</a></p>
     {% endif %}
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>Розмітка аналітиком</h2></div>
+    <div class="section-head"><h2>Разметка аналитиком</h2></div>
     <div class="actions-bar">
-      <button onclick="labelHyp({{ hyp.id }}, 'deal')">Підтвердити: угода</button>
-      <button class="secondary" onclick="labelHyp({{ hyp.id }}, 'withdrawn')">Ні, просто зняли</button>
-      <button class="ghost" onclick="labelHyp({{ hyp.id }}, 'unknown')">Невідомо</button>
-      <span class="muted">зараз: {{ hyp.human_label or '—' }}</span>
+      <button onclick="labelHyp({{ hyp.id }}, 'deal')">Подтвердить: сделка</button>
+      <button class="secondary" onclick="labelHyp({{ hyp.id }}, 'withdrawn')">Нет, просто сняли</button>
+      <button class="ghost" onclick="labelHyp({{ hyp.id }}, 'unknown')">Неизвестно</button>
+      <span class="muted">сейчас: {{ hyp.human_label or '—' }}</span>
     </div>
   </section>
 
@@ -105,9 +105,9 @@
     <div class="section-head"><h2>Timeline</h2></div>
     <ul class="feed">
       {% for e in events %}
-        <li><span class="tag">{{ e.event_type }}</span> {{ e.occurred_at }}</li>
+        <li><span class="tag">{{ ua_event(e.event_type) }}</span> {{ e.occurred_at }}</li>
       {% else %}
-        <li class="muted">Подій немає</li>
+        <li class="muted">Событий нет</li>
       {% endfor %}
     </ul>
   </section>

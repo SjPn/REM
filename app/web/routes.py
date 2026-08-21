@@ -15,7 +15,12 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.db.models import DealHypothesis, Listing, Property, PropertyEvent, WatchFilter
 from app.domain.fingerprint import phone_digits
-from app.domain.market_stats import KYIV_DISTRICTS, compute_all_market_stats, count_active_inventory
+from app.domain.market_stats import (
+    KYIV_DISTRICTS,
+    compute_all_market_stats,
+    count_active_inventory,
+    district_label_ru,
+)
 from app.domain.seller_stress import compute_seller_stress
 from app.domain.signals import (
     activity_summary,
@@ -94,30 +99,30 @@ def _fmt_listing_psm(
     return f"{num} {cur}{suffix}".strip()
 
 
-_DEAL_TYPE_UA = {"sale": "Продаж", "rent": "Оренда"}
+_DEAL_TYPE_UA = {"sale": "Продажа", "rent": "Аренда"}
 _BUCKET_UA = {
-    "likely_deal": "Ймовірна угода",
-    "ambiguous": "Невизначено",
-    "likely_withdrawn": "Скоріше зняли",
+    "likely_deal": "Вероятная сделка",
+    "ambiguous": "Неопределённо",
+    "likely_withdrawn": "Скорее сняли",
 }
 _STATUS_UA = {
-    "active": "Активне",
-    "vanished": "Зникло",
+    "active": "Активно",
+    "vanished": "Исчезло",
     "sold": "Продано",
-    "rented": "Здано",
-    "sold_marked": "Продано (мітка)",
-    "rented_marked": "Здано (мітка)",
-    "relisted": "Реліст",
+    "rented": "Сдано",
+    "sold_marked": "Продано (метка)",
+    "rented_marked": "Сдано (метка)",
+    "relisted": "Повторная публикация",
 }
 _EVENT_UA = {
-    "appeared": "Нове",
-    "price_changed": "Ціна",
+    "appeared": "Новое",
+    "price_changed": "Цена",
     "status_changed": "Статус",
-    "vanished": "Зникло",
-    "relisted": "Реліст",
-    "content_changed": "Оновлено",
+    "vanished": "Исчезло",
+    "relisted": "Снова выставили",
+    "content_changed": "Обновлено",
 }
-_SELLER_UA = {"owner": "Власник", "agency": "Агент", "unknown": "Продавець ?"}
+_SELLER_UA = {"owner": "Собственник", "agency": "Агент", "unknown": "Продавец ?"}
 
 
 def _ua_deal_type(value: str | None) -> str:
@@ -158,6 +163,7 @@ templates.env.globals["ua_bucket"] = _ua_bucket
 templates.env.globals["ua_status"] = _ua_status
 templates.env.globals["ua_event"] = _ua_event
 templates.env.globals["ua_seller"] = _ua_seller
+templates.env.globals["district_ru"] = district_label_ru
 
 
 def _period_since(period: str | None) -> datetime | None:
@@ -451,7 +457,7 @@ def create_watch(
     below_market: int = Form(0),
     db: Session = Depends(get_db),
 ):
-    name = (name or "").strip()[:120] or "Фільтр"
+    name = (name or "").strip()[:120] or "Фильтр"
     watch = WatchFilter(
         name=name,
         q=(q or "").strip() or None,

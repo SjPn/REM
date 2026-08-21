@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% set active_nav = "listings" %}
-{% block title %}Об'єкт #{{ property.id }} — EstateMonitor{% endblock %}
+{% block title %}Объект #{{ property.id }} — EstateMonitor{% endblock %}
 {% block content %}
-  <p class="page-kicker">Обʼєкт #{{ property.id }}</p>
-  <h1 class="page-title">{{ property.title or property.address_norm or 'Без назви' }}</h1>
+  <p class="page-kicker">Объект #{{ property.id }}</p>
+  <h1 class="page-title">{{ property.title or property.address_norm or 'Без названия' }}</h1>
   <p class="page-lead">
     {{ ua_deal_type(property.deal_type) or property.deal_type }}
     {% if property.property_type %} · {{ property.property_type }}{% endif %}
@@ -12,7 +12,7 @@
   </p>
 
   <section class="section">
-    <div class="section-head"><h2>Оголошення на порталах</h2></div>
+    <div class="section-head"><h2>Объявления на порталах</h2></div>
     <div class="listing-list">
       {% for x in listings %}
       <article class="listing">
@@ -20,15 +20,15 @@
           <a class="listing-title" href="{{ x.url }}" target="_blank" rel="noopener noreferrer">
             {{ x.title or x.url }}
           </a>
-            <div class="listing-meta">
-              <span class="tag">{{ x.source }}</span>
-              <span class="tag">{{ ua_status(x.status) }}</span>
-              {% if x.deal_type %}<span class="tag {{ x.deal_type }}">{{ ua_deal_type(x.deal_type) }}</span>{% endif %}
-              {% set sig = signals.get(x.id, {}) if signals is defined else {} %}
-              {% if sig.seller %}<span class="tag seller-{{ sig.seller }}">{{ ua_seller(sig.seller) }}</span>{% endif %}
-              {% if sig.below_market %}<span class="tag below">−{{ sig.discount_pct }}% до ринку</span>{% endif %}
-              {% if sig.cap_rate_pct %}<span class="tag">cap {{ sig.cap_rate_pct }}%</span>{% endif %}
-            </div>
+          <div class="listing-meta">
+            <span class="tag">{{ x.source }}</span>
+            <span class="tag">{{ ua_status(x.status) }}</span>
+            {% if x.deal_type %}<span class="tag {{ x.deal_type }}">{{ ua_deal_type(x.deal_type) }}</span>{% endif %}
+            {% set sig = signals.get(x.id, {}) if signals is defined else {} %}
+            {% if sig.seller %}<span class="tag seller-{{ sig.seller }}">{{ ua_seller(sig.seller) }}</span>{% endif %}
+            {% if sig.below_market %}<span class="tag below">−{{ sig.discount_pct }}% к рынку</span>{% endif %}
+            {% if sig.cap_rate_pct %}<span class="tag">cap {{ sig.cap_rate_pct }}%</span>{% endif %}
+          </div>
           <div class="listing-addr">{{ x.address_raw or '—' }}</div>
         </div>
         <div class="listing-side">
@@ -37,20 +37,20 @@
           {% if psm %}<div class="psm">{{ psm }}</div>{% endif %}
           <div class="area">{% if x.area_sqm %}{{ x.area_sqm }} м²{% else %}—{% endif %}</div>
           <div class="listing-links">
-            <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">відкрити на порталі ↗</a>
+            <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">открыть на портале ↗</a>
           </div>
         </div>
       </article>
       {% else %}
-        <p class="empty">Немає оголошень.</p>
+        <p class="empty">Нет объявлений.</p>
       {% endfor %}
     </div>
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>Гіпотези угод</h2></div>
+    <div class="section-head"><h2>Гипотезы сделок</h2></div>
     {% if not hyps %}
-      <p class="empty">Немає гіпотез.</p>
+      <p class="empty">Нет гипотез.</p>
     {% else %}
       {% for h in hyps %}
         <div class="card">
@@ -61,9 +61,9 @@
           </div>
           <pre>{{ h.features }}</pre>
           <div class="row">
-            <button onclick="labelHyp({{ h.id }}, 'deal')">Це угода</button>
-            <button class="secondary" onclick="labelHyp({{ h.id }}, 'withdrawn')">Зняли</button>
-            <a class="link-more" href="/deals/{{ h.id }}">деталі →</a>
+            <button onclick="labelHyp({{ h.id }}, 'deal')">Это сделка</button>
+            <button class="secondary" onclick="labelHyp({{ h.id }}, 'withdrawn')">Сняли</button>
+            <a class="link-more" href="/deals/{{ h.id }}">детали →</a>
           </div>
         </div>
       {% endfor %}
@@ -74,9 +74,9 @@
     <div class="section-head"><h2>Timeline</h2></div>
     <ul class="feed">
       {% for e in events %}
-        <li><span class="tag">{{ e.event_type }}</span> {{ e.occurred_at }}</li>
+        <li><span class="tag">{{ ua_event(e.event_type) }}</span> {{ e.occurred_at }}</li>
       {% else %}
-        <li class="muted">Подій немає</li>
+        <li class="muted">Событий нет</li>
       {% endfor %}
     </ul>
   </section>
