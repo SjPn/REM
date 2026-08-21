@@ -205,6 +205,47 @@ def clean_junk() -> None:
     rprint({"removed_non_kyiv": removed, "nulled_bad_prices": fixed_price, "orphan_props": orphans})
 
 
+@app.command("fix-prices")
+def fix_prices() -> None:
+    """Repair listings where stored price is actually $/m² (implied PSM too low)."""
+    from sqlalchemy import select
+
+    from app.db.models import Listing
+    from app.domain.pricing import normalize_listing_price
+
+    init_db()
+    SessionLocal = get_session_factory()
+    fixed = 0
+    with SessionLocal() as db:
+        for lst in db.scalars(select(Listing)):
+            norm = normalize_listing_price(
+                price=lst.price,
+                currency=lst.currency,
+                area_sqm=lst.area_sqm,
+                deal_type=lst.deal_type,
+                price_per_sqm=lst.price_per_sqm,
+                title=lst.title,
+                description=lst.description,
+            )
+            if not norm.reinterpreted_as_psm:
+                # still fill explicit psm from title when missing
+                if lst.price_per_sqm is None and norm.price_per_sqm is not None:
+                    lst.price_per_sqm = norm.price_per_sqm
+                    fixed += 1
+                continue
+            lst.price = norm.price
+            if norm.currency:
+                lst.currency = norm.currency
+            lst.price_per_sqm = norm.price_per_sqm
+            extra = dict(lst.raw_extra or {})
+            extra["price_was_psm"] = True
+            extra["price_norm"] = norm.detail
+            lst.raw_extra = extra
+            fixed += 1
+        db.commit()
+    rprint({"fixed": fixed})
+
+
 @app.command("backfill-opex")
 def backfill_opex() -> None:
     """Parse OPEX markers from rent listing text into raw_extra.opex."""

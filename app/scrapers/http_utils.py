@@ -38,7 +38,7 @@ def sleep_crawl_delay(*, blocked: bool = False) -> None:
 
 
 def parse_price(text: str | None) -> tuple[float | None, str | None]:
-    """Parse a single price near a currency marker. Never concatenate whole-page digits."""
+    """Parse a single *total* price near a currency marker. Skip $/м² chips."""
     if not text:
         return None, None
 
@@ -50,13 +50,25 @@ def parse_price(text: str | None) -> tuple[float | None, str | None]:
         (r"(?:UAH|₴|грн)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "UAH"),
         (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:UAH|₴|грн)", "UAH"),
     ]
+    candidates: list[tuple[float, str, int]] = []
     for pat, cur in patterns:
-        m = re.search(pat, text, flags=re.IGNORECASE)
-        if not m:
-            continue
-        value = _to_price_number(m.group(1))
-        if value is not None:
-            return value, cur
+        for m in re.finditer(pat, text, flags=re.IGNORECASE):
+            # Skip "115 $/м²" — rate, not total. Keep "2 500 $ / міс" (monthly total).
+            tail = text[m.end() : m.end() + 12]
+            if re.match(
+                r"\s*/\s*м(?:²|2)|\s*/\s*m2|\s*/\s*sqm|\s*за\s*м(?:²|2)",
+                tail,
+                flags=re.IGNORECASE,
+            ):
+                continue
+            value = _to_price_number(m.group(1))
+            if value is not None:
+                candidates.append((value, cur, m.start()))
+
+    if candidates:
+        # Prefer the largest plausible total (rieltor cards often show total + $/м²)
+        candidates.sort(key=lambda x: (-x[0], x[2]))
+        return candidates[0][0], candidates[0][1]
 
     lower = text.lower()
     currency = None
@@ -73,6 +85,38 @@ def parse_price(text: str | None) -> tuple[float | None, str | None]:
     if not m:
         return None, currency
     return _to_price_number(m.group(1)), currency
+
+
+def parse_price_per_sqm(text: str | None) -> tuple[float | None, str | None]:
+    """Parse explicit N $/м² (or грн/м²) from card text. Not $/міс."""
+    if not text:
+        return None, None
+    m = re.search(
+        r"(\d{1,3}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*"
+        r"(USD|\$|UAH|₴|грн|EUR|€)?\s*/\s*м(?:²|2)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        m = re.search(
+            r"(\d{1,3}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*"
+            r"(USD|\$|UAH|₴|грн|EUR|€)?\s*/\s*sqm\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    if not m:
+        return None, None
+    value = _to_price_number(m.group(1))
+    cur_raw = (m.group(2) or "").lower()
+    if cur_raw in ("$", "usd") or "$" in (m.group(0) or ""):
+        cur = "USD"
+    elif cur_raw in ("€", "eur") or "€" in (m.group(0) or ""):
+        cur = "EUR"
+    elif cur_raw in ("uah", "грн", "₴") or "грн" in (m.group(0) or "").lower():
+        cur = "UAH"
+    else:
+        cur = "USD"
+    return value, cur
 
 
 def _to_price_number(raw: str) -> float | None:

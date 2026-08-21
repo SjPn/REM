@@ -11,6 +11,7 @@ from app.domain.enums import EventType, ListingStatus
 from app.domain.fingerprint import FingerprintInput, build_fingerprint, normalize_address
 from app.domain.segments import classify_segment
 from app.domain.signals import detect_opex, parse_cap_and_noi
+from app.domain.pricing import normalize_listing_price
 from app.scrapers.base import RawListing
 
 logger = logging.getLogger(__name__)
@@ -90,8 +91,28 @@ def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None
         except (TypeError, ValueError):
             raw.price = None
 
+    # If implied $/m² is absurdly low, the "price" was likely already $/m²
+    norm = normalize_listing_price(
+        price=raw.price,
+        currency=raw.currency,
+        area_sqm=raw.area_sqm,
+        deal_type=raw.deal_type,
+        price_per_sqm=raw.price_per_sqm,
+        title=raw.title,
+        description=raw.description,
+    )
+    raw.price = norm.price
+    raw.currency = norm.currency or raw.currency
+    raw.price_per_sqm = norm.price_per_sqm
+    if norm.reinterpreted_as_psm:
+        finance_extra_hint = {"price_was_psm": True, "price_norm": norm.detail}
+    else:
+        finance_extra_hint = {}
+
     now = _aware(seen_at)
     finance_extra = _merge_finance_signals(raw)
+    if finance_extra_hint:
+        finance_extra = {**finance_extra, **finance_extra_hint}
     raw.extra = finance_extra
     listing = db.scalar(
         select(Listing).where(

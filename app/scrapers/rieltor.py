@@ -18,7 +18,7 @@ from app.scrapers.detail import (
     og_meta,
 )
 from app.scrapers.enrich import enrich_listings
-from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area, parse_floor, parse_price, sleep_crawl_delay
+from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area, parse_floor, parse_price, parse_price_per_sqm, sleep_crawl_delay
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,9 @@ class RieltorScraper:
         price, currency = parse_price(title or "")
         if price is None:
             price, currency = parse_price(text[:1500])
+        psm, _ = parse_price_per_sqm(title or "")
+        if psm is None:
+            psm, _ = parse_price_per_sqm(text[:1500])
         area, floor = extract_floor_area_from_text(title, description, text[:3000])
         address = self._extract_address(title) or self._extract_address(text[:2000])
         district = self._extract_district(text[:2500])
@@ -90,6 +93,7 @@ class RieltorScraper:
         listing.description = description
         listing.price = price if price is not None else listing.price
         listing.currency = currency or listing.currency
+        listing.price_per_sqm = psm if psm is not None else listing.price_per_sqm
         listing.area_sqm = area or listing.area_sqm
         listing.floor = floor if floor is not None else listing.floor
         listing.address_raw = address or listing.address_raw
@@ -125,6 +129,7 @@ class RieltorScraper:
             if len(title or "") < 3:
                 title = local[:180] or f"RIELTOR {ext_id}"
             price, currency = parse_price(local)
+            psm, _psm_cur = parse_price_per_sqm(local)
             area = parse_area(local)
             floor = parse_floor(local)
             phones = extract_phones(local)
@@ -138,6 +143,7 @@ class RieltorScraper:
                     property_type=guess_property_type(f"{title} {url}"),
                     price=price,
                     currency=currency or ("USD" if deal_type == DealType.SALE else "UAH"),
+                    price_per_sqm=psm,
                     area_sqm=area,
                     floor=floor,
                     address_raw=self._extract_address(title) or self._extract_address(local),
