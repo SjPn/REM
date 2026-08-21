@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.db.models import DealHypothesis, Listing, Property, PropertyEvent, WatchFilter
 from app.domain.fingerprint import phone_digits
-from app.domain.market_stats import KYIV_DISTRICTS, compute_all_market_stats
+from app.domain.market_stats import KYIV_DISTRICTS, compute_all_market_stats, count_active_inventory
 from app.domain.seller_stress import compute_seller_stress
 from app.domain.signals import (
     activity_summary,
@@ -263,12 +263,47 @@ def _district_rows(market: dict, *, with_median: bool = False) -> list[dict]:
     return rows
 
 
+def _mode_district_rows(
+    market: dict,
+    inventory: dict,
+    stress_map: dict,
+    *,
+    mode: str,
+) -> list[dict]:
+    """Rows for one deal mode: inventory + $/m² sample + seller pressure."""
+    slice_ = market["sale"] if mode == "sale" else market["rent"]
+    by_price = {d.district: d for d in slice_.districts}
+    inv_by = {d["district"]: d for d in inventory["districts"]}
+    rows = []
+    names = set(by_price) | set(inv_by) | set(stress_map)
+    for name in KYIV_DISTRICTS:
+        if name not in names:
+            continue
+        price = by_price.get(name)
+        inv = inv_by.get(name, {})
+        st = stress_map.get(name)
+        active_count = inv.get(mode, 0)
+        rows.append(
+            {
+                "district": name,
+                "active": active_count,
+                "avg_psm": price.avg_psm if price else None,
+                "median_psm": price.median_psm if price else None,
+                "sample_n": price.count if price else 0,
+                "stress": st.score if st else None,
+                "stress_detail": st.detail if st else "",
+            }
+        )
+    rows.sort(key=lambda x: (-x["active"], x["avg_psm"] is None, -(x["avg_psm"] or 0)))
+    return rows
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
     db: Session = Depends(get_db),
     source: str | None = None,
-    deal_type: str | None = None,
+    deal_type: str = Query("sale", pattern="^(sale|rent)$"),
     segment: str | None = None,
     q: str | None = None,
     period: str | None = None,
@@ -280,15 +315,15 @@ def dashboard(
     activity_7d = activity_summary(db, hours=168)
     events = recent_events(db, hours=24, limit=25)
     watches = db.scalars(select(WatchFilter).order_by(WatchFilter.created_at.desc()).limit(20)).all()
+    inventory = count_active_inventory(db)
 
     filters = [
         Listing.status.in_(["active", "relisted"]),
         Listing.price.is_not(None),
+        Listing.deal_type == deal_type,
     ]
     if source:
         filters.append(Listing.source == source)
-    if deal_type:
-        filters.append(Listing.deal_type == deal_type)
     if segment:
         filters.append(Listing.property_type == segment)
     since = _period_since(period)
@@ -308,6 +343,9 @@ def dashboard(
     market = compute_all_market_stats(db)
     sale_med = {d.district: d.median_psm for d in market["sale"].districts}
     rent_med = {d.district: d.median_psm for d in market["rent"].districts}
+    stress_map = {s.district: s for s in compute_seller_stress(db, deal_type=deal_type)}
+    mode_rows = _mode_district_rows(market, inventory, stress_map, mode=deal_type)
+    market_slice = market[deal_type]
 
     if below_market:
         candidates = db.scalars(
@@ -356,7 +394,7 @@ def dashboard(
         r[0]
         for r in db.execute(
             select(Listing.property_type, func.count())
-            .where(Listing.property_type.is_not(None))
+            .where(Listing.property_type.is_not(None), Listing.deal_type == deal_type)
             .group_by(Listing.property_type)
             .order_by(func.count().desc())
         ).all()
@@ -365,7 +403,10 @@ def dashboard(
     sources = [
         r[0]
         for r in db.execute(
-            select(Listing.source, func.count()).group_by(Listing.source).order_by(func.count().desc())
+            select(Listing.source, func.count())
+            .where(Listing.deal_type == deal_type)
+            .group_by(Listing.source)
+            .order_by(func.count().desc())
         ).all()
     ]
 
@@ -384,7 +425,7 @@ def dashboard(
             "pages": pages,
             "per_page": per_page,
             "source": source or "",
-            "deal_type": deal_type or "",
+            "deal_type": deal_type,
             "segment": segment or "",
             "q": q or "",
             "period": period or "",
@@ -392,7 +433,9 @@ def dashboard(
             "segments": segments,
             "sources": sources,
             "market": market,
-            "district_rows": _district_rows(market),
+            "market_slice": market_slice,
+            "inventory": inventory,
+            "mode_rows": mode_rows,
         },
     )
 
@@ -441,18 +484,29 @@ def delete_watch(watch_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/market", response_class=HTMLResponse)
-def market_page(request: Request, db: Session = Depends(get_db)):
+def market_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    mode: str = Query("sale", pattern="^(sale|rent)$"),
+):
     market = compute_all_market_stats(db)
-    stress = {s.district: s for s in compute_seller_stress(db)}
-    rows = _district_rows(market, with_median=True)
-    for row in rows:
-        s = stress.get(row["district"])
-        row["stress"] = s.score if s else None
-        row["stress_detail"] = s.detail if s else ""
+    inventory = count_active_inventory(db)
+    stress_map = {s.district: s for s in compute_seller_stress(db, deal_type=mode)}
+    mode_rows = _mode_district_rows(market, inventory, stress_map, mode=mode)
+    market_slice = market[mode]
+    compare_rows = _district_rows(market, with_median=True)
+    compare_by = {r["district"]: r for r in compare_rows}
     return templates.TemplateResponse(
         request,
         "market.html",
-        {"market": market, "district_rows": rows, "stress_list": list(stress.values())},
+        {
+            "mode": mode,
+            "market": market,
+            "market_slice": market_slice,
+            "inventory": inventory,
+            "mode_rows": mode_rows,
+            "compare_by": compare_by,
+        },
     )
 
 

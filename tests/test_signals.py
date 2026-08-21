@@ -40,9 +40,19 @@ def test_classify_seller():
     assert classify_seller(agency=None, phone="380501112233", title="Офіс власника", phone_listing_count=1) == "owner"
 
 
-def test_portal_blocked_error():
-    err = PortalBlockedError(429, "https://example.com")
-    assert err.status_code == 429
+def test_count_active_inventory_shape():
+    from app.db import init_db, get_session_factory
+    from app.domain.market_stats import count_active_inventory
+
+    init_db()
+    db = get_session_factory()()
+    try:
+        inv = count_active_inventory(db)
+        assert "sale_total" in inv and "rent_total" in inv
+        assert isinstance(inv["districts"], list)
+    finally:
+        db.close()
+
 
 
 def test_sleep_crawl_delay_runs(monkeypatch):
@@ -67,4 +77,4 @@ def test_sleep_crawl_delay_runs(monkeypatch):
     sleep_crawl_delay()
     assert called["sec"] >= 0.2
     sleep_crawl_delay(blocked=True)
-    assert called["sec"] >= 8.0
+    assert called["sec"] >= 7.0

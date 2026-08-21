@@ -196,3 +196,45 @@ def compute_all_market_stats(db: Session) -> dict[str, MarketSlice]:
         "sale": compute_market_stats(db, deal_type="sale"),
         "rent": compute_market_stats(db, deal_type="rent"),
     }
+
+
+def count_active_inventory(db: Session) -> dict:
+    """How many active listings are for sale vs rent (city + by district)."""
+    sale_by = {d: 0 for d in KYIV_DISTRICTS}
+    rent_by = {d: 0 for d in KYIV_DISTRICTS}
+    sale_total = 0
+    rent_total = 0
+    sale_no_district = 0
+    rent_no_district = 0
+
+    q = select(Listing).where(Listing.status.in_(["active", "relisted"]))
+    for lst in db.scalars(q):
+        district = normalize_district(lst.district) or extract_district(
+            lst.address_raw, lst.title, lst.city
+        )
+        if lst.deal_type == "sale":
+            sale_total += 1
+            if district in sale_by:
+                sale_by[district] += 1
+            else:
+                sale_no_district += 1
+        elif lst.deal_type == "rent":
+            rent_total += 1
+            if district in rent_by:
+                rent_by[district] += 1
+            else:
+                rent_no_district += 1
+
+    districts = []
+    for name in KYIV_DISTRICTS:
+        s, r = sale_by[name], rent_by[name]
+        if s or r:
+            districts.append({"district": name, "sale": s, "rent": r})
+
+    return {
+        "sale_total": sale_total,
+        "rent_total": rent_total,
+        "sale_no_district": sale_no_district,
+        "rent_no_district": rent_no_district,
+        "districts": districts,
+    }

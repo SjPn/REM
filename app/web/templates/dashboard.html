@@ -1,15 +1,25 @@
 {% extends "base.html" %}
-{% set active_nav = "listings" %}
-{% block title %}Оголошення — EstateMonitor{% endblock %}
+{% set active_nav = deal_type %}
+{% block title %}{{ 'Продаж' if deal_type == 'sale' else 'Оренда' }} — EstateMonitor{% endblock %}
 {% block content %}
-  <p class="page-kicker">Моніторинг ринку</p>
-  <h1 class="page-title">Оголошення</h1>
-  <p class="page-lead">Офіси, шоуруми, street retail, БЦ · Київ. Сигнали в інтерфейсі — без Telegram.</p>
+  <p class="page-kicker">Каталог · {{ 'продаж' if deal_type == 'sale' else 'оренда' }}</p>
+  <h1 class="page-title">{{ 'Продаж' if deal_type == 'sale' else 'Оренда' }} комерції</h1>
+  <p class="page-lead">
+    Зараз в базі:
+    <strong>{{ inventory.sale_total }}</strong> у продажу ·
+    <strong>{{ inventory.rent_total }}</strong> в оренді.
+    Нижче — лише режим «{{ 'продаж' if deal_type == 'sale' else 'оренда' }}».
+  </p>
+
+  <div class="mode-tabs" aria-label="Режим">
+    <a class="{% if deal_type == 'sale' %}active{% endif %}" href="/?deal_type=sale">Продаж ({{ inventory.sale_total }})</a>
+    <a class="{% if deal_type == 'rent' %}active{% endif %}" href="/?deal_type=rent">Оренда ({{ inventory.rent_total }})</a>
+  </div>
 
   <section class="pulse" aria-label="Сигнали за 24 год">
-    <a class="pulse-item is-hot" href="/?period=24h">
+    <a class="pulse-item is-hot" href="/?deal_type={{ deal_type }}&period=24h">
       <div class="pulse-n">{{ activity.new_listings }}</div>
-      <div class="pulse-l">Нові за 24 год →</div>
+      <div class="pulse-l">Нові за 24 год (усі типи) →</div>
     </a>
     <div class="pulse-item">
       <div class="pulse-n">{{ activity.sold_or_rented }}</div>
@@ -17,74 +27,91 @@
     </div>
     <div class="pulse-item">
       <div class="pulse-n">{{ activity.vanished }}</div>
-      <div class="pulse-l">Зникло</div>
+      <div class="pulse-l">Зникло з порталів</div>
     </div>
     <div class="pulse-item">
       <div class="pulse-n">{{ activity.price_drops }}</div>
-      <div class="pulse-l">Дампи ціни</div>
+      <div class="pulse-l">Зниження ціни</div>
     </div>
     <a class="pulse-item is-hot" href="/deals?bucket=likely_deal">
       <div class="pulse-n">{{ activity.likely_deals }}</div>
-      <div class="pulse-l">Ймовірні угоди (24г) →</div>
+      <div class="pulse-l">Ймовірні угоди →</div>
     </a>
     <div class="pulse-item">
       <div class="pulse-n">{{ activity.relisted }}</div>
-      <div class="pulse-l">Релісти</div>
+      <div class="pulse-l">Знову виставили</div>
     </div>
-  </section>
-  <p class="muted" style="margin-top:0.45rem;">
-    За 7 днів: нові {{ activity_7d.new_listings }} · зникло {{ activity_7d.vanished }} ·
-    дампи {{ activity_7d.price_drops }} · угоди {{ activity_7d.likely_deals }}
-  </p>
-
-  <section class="section">
-    <div class="section-head">
-      <h2>Стрічка змін (24 год)</h2>
-    </div>
-    {% if events %}
-      <ul class="feed">
-        {% for e in events %}
-          <li>
-            <span class="tag">{{ ua_event(e.event_type) }}</span>
-            <span class="muted">{{ e.occurred_at }}</span>
-            {% if e.listing_id %}<span class="muted">· listing #{{ e.listing_id }}</span>{% endif %}
-            {% if e.property_id %}
-              <a href="/properties/{{ e.property_id }}">обʼєкт #{{ e.property_id }}</a>
-            {% endif %}
-          </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p class="empty">Подій за добу ще немає — зʼявляться після crawl.</p>
-    {% endif %}
   </section>
 
   <section class="section">
     <div class="section-head">
-      <h2>Середня ціна м² · Київ</h2>
-      <a class="link-more" href="/market">Ринок + seller stress →</a>
+      <h2>
+        {% if deal_type == 'sale' %}Ціна м² · продаж{% else %}Ціна м² · оренда{% endif %}
+      </h2>
+      <a class="link-more" href="/market?mode={{ deal_type }}">Детальний ринок →</a>
     </div>
     <div class="market-strip">
       <div class="market-tile">
-        <div class="l">Продаж</div>
-        <div class="n">{{ fmt_psm(market.sale.city_avg_psm, 'sale') }}</div>
-        <div class="muted">медіана {{ fmt_psm(market.sale.city_median_psm, 'sale') }} · n={{ market.sale.city_count }}</div>
+        <div class="l">Середня по Києву</div>
+        <div class="n">{{ fmt_psm(market_slice.city_avg_psm, deal_type) }}</div>
+        <div class="muted">
+          медіана {{ fmt_psm(market_slice.city_median_psm, deal_type) }} ·
+          оголошень у розрахунку: {{ market_slice.city_count }}
+        </div>
       </div>
       <div class="market-tile">
-        <div class="l">Оренда</div>
-        <div class="n">{{ fmt_psm(market.rent.city_avg_psm, 'rent') }}</div>
-        <div class="muted">медіана {{ fmt_psm(market.rent.city_median_psm, 'rent') }} · n={{ market.rent.city_count }}</div>
+        <div class="l">Активних зараз</div>
+        <div class="n">
+          {% if deal_type == 'sale' %}{{ inventory.sale_total }}{% else %}{{ inventory.rent_total }}{% endif %}
+        </div>
+        <div class="muted">
+          {% if deal_type == 'sale' %}обʼєктів у продажу{% else %}обʼєктів в оренді{% endif %}
+          · інший режим:
+          {% if deal_type == 'sale' %}оренда {{ inventory.rent_total }}{% else %}продаж {{ inventory.sale_total }}{% endif %}
+        </div>
       </div>
     </div>
+
+    {% if mode_rows %}
+    <div class="table-wrap" style="margin-top:0.85rem;">
+      <table>
+        <thead>
+          <tr>
+            <th>Район</th>
+            <th>{% if deal_type == 'sale' %}У продажу{% else %}В оренді{% endif %}</th>
+            <th>Середня $/м²</th>
+            <th>Медіана $/м²</th>
+            <th title="Скільки оголошень з ціною й площею пішли в розрахунок середньої">У розрахунку ціни</th>
+            <th title="0–100: тиск продавців за 7 днів (зникнення, релісти, зниження ціни). Не факт угод.">Тиск продавців</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in mode_rows %}
+          <tr>
+            <td><strong>{{ row.district }}</strong></td>
+            <td class="num">{{ row.active }}</td>
+            <td class="num">{% if row.avg_psm is not none %}{{ '%.0f'|format(row.avg_psm) if deal_type == 'sale' else '%.1f'|format(row.avg_psm) }}{% else %}—{% endif %}</td>
+            <td class="num">{% if row.median_psm is not none %}{{ '%.0f'|format(row.median_psm) if deal_type == 'sale' else '%.1f'|format(row.median_psm) }}{% else %}—{% endif %}</td>
+            <td class="muted">{{ row.sample_n or '—' }}</td>
+            <td class="num" title="{{ row.stress_detail }}">
+              {% if row.stress is not none %}{{ row.stress }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="margin-top:0.55rem;">
+      <strong>У розрахунку ціни</strong> — скільки оголошень мають і ціну, і площу (для $/м²).
+      <strong>Тиск продавців</strong> — індекс 0–100 за 7 днів: зникнення + релісти + зниження ціни
+      (гіпотеза, не підтверджені угоди). Наведіть курсор на число — деталі.
+    </p>
+    {% endif %}
   </section>
 
   <form class="filters" method="get" action="/">
+    <input type="hidden" name="deal_type" value="{{ deal_type }}" />
     <input type="search" name="q" value="{{ q }}" placeholder="Вулиця, район, назва…" aria-label="Пошук" />
-    <select name="deal_type" aria-label="Тип угоди">
-      <option value="">Продаж / оренда</option>
-      <option value="sale" {% if deal_type == 'sale' %}selected{% endif %}>Продаж</option>
-      <option value="rent" {% if deal_type == 'rent' %}selected{% endif %}>Оренда</option>
-    </select>
     <select name="source" aria-label="Портал">
       <option value="">Усі портали</option>
       {% for s in sources %}
@@ -110,9 +137,7 @@
   </form>
 
   <section class="section" style="margin-top:0;">
-    <div class="section-head">
-      <h2>Збережені фільтри</h2>
-    </div>
+    <div class="section-head"><h2>Збережені фільтри</h2></div>
     <form class="actions-bar" method="post" action="/watches">
       <input type="hidden" name="q" value="{{ q }}" />
       <input type="hidden" name="source" value="{{ source }}" />
@@ -127,7 +152,7 @@
       <div class="watch-list">
         {% for w in watches %}
           <div class="watch-item">
-            <a href="/?q={{ w.q or '' }}&source={{ w.source or '' }}&deal_type={{ w.deal_type or '' }}&segment={{ w.segment or '' }}&period={{ w.period or '' }}&below_market={{ 1 if w.below_market else 0 }}">
+            <a href="/?q={{ w.q or '' }}&source={{ w.source or '' }}&deal_type={{ w.deal_type or deal_type }}&segment={{ w.segment or '' }}&period={{ w.period or '' }}&below_market={{ 1 if w.below_market else 0 }}">
               {{ w.name }}
             </a>
             <form method="post" action="/watches/{{ w.id }}/delete" style="display:inline;">
@@ -141,12 +166,12 @@
 
   <section>
     <div class="section-head">
-      <h2>Каталог</h2>
-      <span class="muted">{{ total }} знайдено · стор. {{ page }}/{{ pages }}</span>
+      <h2>Оголошення · {{ 'продаж' if deal_type == 'sale' else 'оренда' }}</h2>
+      <span class="muted">{{ total }} з ціною · стор. {{ page }}/{{ pages }}</span>
     </div>
 
     {% if not listings %}
-      <p class="empty">Немає оголошень з ціною. Запустіть crawl: <code>python -m scripts.cli backfill</code></p>
+      <p class="empty">Немає оголошень. Запустіть crawl або змініть фільтри.</p>
     {% else %}
       <div class="listing-list">
         {% for x in listings %}
@@ -168,7 +193,6 @@
                 <span class="tag">{{ sig.portals }} портали</span>
               {% endif %}
               {% if sig.cap_rate_pct %}<span class="tag">cap {{ sig.cap_rate_pct }}%</span>{% endif %}
-              {% if x.floor is not none %}<span class="muted">поверх {{ x.floor }}</span>{% endif %}
             </div>
             <div class="listing-addr">
               {% if x.address_raw %}{{ x.address_raw }}{% else %}<span class="warn-text">адреса не розпізнана</span>{% endif %}
@@ -180,33 +204,26 @@
             <div class="price">{{ fmt_price(x.price, x.currency) }}</div>
             {% set psm = fmt_listing_psm(x.price, x.currency, x.area_sqm, x.deal_type, x.price_per_sqm) %}
             {% if psm %}<div class="psm">{{ psm }}</div>{% endif %}
-            {% if sig.noi %}<div class="muted">NOI {{ '%.0f'|format(sig.noi) }}</div>{% endif %}
             <div class="area">
               {% if x.area_sqm %}{{ x.area_sqm }} м²{% else %}<span class="warn-text">площа ?</span>{% endif %}
             </div>
             <div class="listing-links">
               <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">на порталі ↗</a>
-              {% if x.property_id %}
-                <a href="/properties/{{ x.property_id }}">в системі</a>
-              {% endif %}
+              {% if x.property_id %}<a href="/properties/{{ x.property_id }}">в системі</a>{% endif %}
             </div>
           </div>
         </article>
         {% endfor %}
       </div>
 
-      <nav class="pager" aria-label="Пагінація">
+      <nav class="pager">
         {% if page > 1 %}
           <a href="?page={{ page - 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}&period={{ period }}&below_market={{ below_market }}">← Назад</a>
-        {% else %}
-          <span></span>
-        {% endif %}
+        {% else %}<span></span>{% endif %}
         <span>Сторінка {{ page }} з {{ pages }}</span>
         {% if page < pages %}
           <a href="?page={{ page + 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}&period={{ period }}&below_market={{ below_market }}">Далі →</a>
-        {% else %}
-          <span></span>
-        {% endif %}
+        {% else %}<span></span>{% endif %}
       </nav>
     {% endif %}
   </section>

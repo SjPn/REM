@@ -1,72 +1,119 @@
 {% extends "base.html" %}
 {% set active_nav = "market" %}
-{% block title %}Ринок м² — EstateMonitor{% endblock %}
+{% block title %}Ринок — {{ 'Продаж' if mode == 'sale' else 'Оренда' }} — EstateMonitor{% endblock %}
 {% block content %}
   <p class="page-kicker">Аналітика</p>
-  <h1 class="page-title">Ринок м² · Київ</h1>
+  <h1 class="page-title">Ринок · {{ 'продаж' if mode == 'sale' else 'оренда' }}</h1>
   <p class="page-lead">
-    Середні ціни по активних оголошеннях. Seller stress — гіпотеза тиску продавців по району
-    (зникнення, релісти, дампи ціни за 7 днів), не факт угод.
+    Зараз у базі: <strong>{{ inventory.sale_total }}</strong> у продажу ·
+    <strong>{{ inventory.rent_total }}</strong> в оренді.
   </p>
 
-  <div class="market-strip" style="margin-top: 1.35rem;">
+  <div class="mode-tabs">
+    <a class="{% if mode == 'sale' %}active{% endif %}" href="/market?mode=sale">Продаж ({{ inventory.sale_total }})</a>
+    <a class="{% if mode == 'rent' %}active{% endif %}" href="/market?mode=rent">Оренда ({{ inventory.rent_total }})</a>
+  </div>
+
+  <div class="market-strip" style="margin-top: 1.1rem;">
     <div class="market-tile">
-      <div class="l">Київ · продаж</div>
-      <div class="n">{{ fmt_psm(market.sale.city_avg_psm, 'sale') }}</div>
+      <div class="l">Середня $/м² · Київ</div>
+      <div class="n">{{ fmt_psm(market_slice.city_avg_psm, mode) }}</div>
       <div class="muted">
-        медіана {{ fmt_psm(market.sale.city_median_psm, 'sale') }} ·
-        вибірка {{ market.sale.city_count }}
+        медіана {{ fmt_psm(market_slice.city_median_psm, mode) }} ·
+        оголошень у розрахунку ціни: {{ market_slice.city_count }}
       </div>
     </div>
     <div class="market-tile">
-      <div class="l">Київ · оренда</div>
-      <div class="n">{{ fmt_psm(market.rent.city_avg_psm, 'rent') }}</div>
+      <div class="l">{% if mode == 'sale' %}Активних у продажу{% else %}Активних в оренді{% endif %}</div>
+      <div class="n">
+        {% if mode == 'sale' %}{{ inventory.sale_total }}{% else %}{{ inventory.rent_total }}{% endif %}
+      </div>
       <div class="muted">
-        медіана {{ fmt_psm(market.rent.city_median_psm, 'rent') }} ·
-        вибірка {{ market.rent.city_count }}
+        без району:
+        {% if mode == 'sale' %}{{ inventory.sale_no_district }}{% else %}{{ inventory.rent_no_district }}{% endif %}
       </div>
     </div>
   </div>
 
   <section class="section">
     <div class="section-head">
-      <h2>По районах</h2>
+      <h2>По районах · {{ 'продаж' if mode == 'sale' else 'оренда' }}</h2>
     </div>
-    {% if not district_rows %}
-      <p class="empty">Недостатньо оголошень з визначеним районом.</p>
+    {% if not mode_rows %}
+      <p class="empty">Мало даних по районах.</p>
     {% else %}
       <div class="table-wrap">
         <table class="market-table">
           <thead>
             <tr>
               <th>Район</th>
-              <th>Продаж середнє</th>
-              <th>Продаж медіана</th>
-              <th>n</th>
-              <th>Оренда середнє</th>
-              <th>Оренда медіана</th>
-              <th>n</th>
-              <th>Seller stress</th>
+              <th>{% if mode == 'sale' %}Скільки продається{% else %}Скільки здається{% endif %}</th>
+              <th>Середня $/м²</th>
+              <th>Медіана $/м²</th>
+              <th title="Оголошення з ціною і площею, з яких порахували середню">У розрахунку ціни</th>
+              <th title="0–100 за 7 днів: зникнення + релісти + зниження ціни. Гіпотеза, не факт угод.">Тиск продавців (0–100)</th>
             </tr>
           </thead>
           <tbody>
-            {% for row in district_rows %}
+            {% for row in mode_rows %}
             <tr>
               <td><strong>{{ row.district }}</strong></td>
-              <td class="num">{% if row.sale_avg is not none %}{{ '%.0f'|format(row.sale_avg) }} $/м²{% else %}—{% endif %}</td>
-              <td class="num">{% if row.sale_median is not none %}{{ '%.0f'|format(row.sale_median) }}{% else %}—{% endif %}</td>
-              <td class="muted">{{ row.sale_n or '—' }}</td>
-              <td class="num">{% if row.rent_avg is not none %}{{ '%.1f'|format(row.rent_avg) }} $/м²·міс{% else %}—{% endif %}</td>
-              <td class="num">{% if row.rent_median is not none %}{{ '%.1f'|format(row.rent_median) }}{% else %}—{% endif %}</td>
-              <td class="muted">{{ row.rent_n or '—' }}</td>
-              <td class="num" title="{{ row.stress_detail }}">
-                {% if row.stress is not none %}{{ row.stress }}{% else %}—{% endif %}
-              </td>
+              <td class="num">{{ row.active }}</td>
+              <td class="num">{% if row.avg_psm is not none %}{{ '%.0f'|format(row.avg_psm) if mode == 'sale' else '%.1f'|format(row.avg_psm) }}{% else %}—{% endif %}</td>
+              <td class="num">{% if row.median_psm is not none %}{{ '%.0f'|format(row.median_psm) if mode == 'sale' else '%.1f'|format(row.median_psm) }}{% else %}—{% endif %}</td>
+              <td class="muted">{{ row.sample_n or '—' }}</td>
+              <td class="num" title="{{ row.stress_detail }}">{% if row.stress is not none %}{{ row.stress }}{% else %}—{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
+      <p class="muted" style="margin-top:0.65rem;">
+        <strong>Скільки продається / здається</strong> — активні оголошення зараз.<br />
+        <strong>У розрахунку ціни</strong> — лише ті, де є і ціна, і площа (для $/м²).<br />
+        <strong>Тиск продавців</strong> — індекс активності зняття/перевиставлення/знижок за тиждень, не підтверджені угоди.
+      </p>
     {% endif %}
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Порівняння: продаж і оренда разом</h2>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Район</th>
+            <th>У продажу</th>
+            <th>В оренді</th>
+            <th>Продаж $/м²</th>
+            <th>Оренда $/м²·міс</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in inventory.districts %}
+          {% set price = compare_by.get(row.district) %}
+          <tr>
+            <td><strong>{{ row.district }}</strong></td>
+            <td class="num">{{ row.sale }}</td>
+            <td class="num">{{ row.rent }}</td>
+            <td class="num">
+              {% if price and price.sale_avg is not none %}{{ '%.0f'|format(price.sale_avg) }}{% else %}—{% endif %}
+            </td>
+            <td class="num">
+              {% if price and price.rent_avg is not none %}{{ '%.1f'|format(price.rent_avg) }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          <tr>
+            <td><strong>Разом по Києву</strong></td>
+            <td class="num"><strong>{{ inventory.sale_total }}</strong></td>
+            <td class="num"><strong>{{ inventory.rent_total }}</strong></td>
+            <td class="muted" colspan="2">включно з обʼєктами без району</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 {% endblock %}

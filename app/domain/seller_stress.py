@@ -38,17 +38,20 @@ def _district_of(listing: Listing | None, payload: dict | None = None) -> str | 
     return None
 
 
-def compute_seller_stress(db: Session, *, days: int = 7) -> list[DistrictStress]:
-    """Relative seller-stress index by Kyiv district (hypothesis, not a fact)."""
+def compute_seller_stress(
+    db: Session, *, days: int = 7, deal_type: str | None = None
+) -> list[DistrictStress]:
+    """Тиск продавців 0–100 по району (гіпотеза): зникнення, релісти, дампи ціни."""
     since = _since(days)
     vanished = {d: 0 for d in KYIV_DISTRICTS}
     relisted = {d: 0 for d in KYIV_DISTRICTS}
     drops = {d: 0 for d in KYIV_DISTRICTS}
     active = {d: 0 for d in KYIV_DISTRICTS}
 
-    for lst in db.scalars(
-        select(Listing).where(Listing.status.in_(["active", "relisted"]))
-    ):
+    active_q = select(Listing).where(Listing.status.in_(["active", "relisted"]))
+    if deal_type:
+        active_q = active_q.where(Listing.deal_type == deal_type)
+    for lst in db.scalars(active_q):
         d = _district_of(lst)
         if d in active:
             active[d] += 1
@@ -64,6 +67,10 @@ def compute_seller_stress(db: Session, *, days: int = 7) -> list[DistrictStress]
             if ev.listing_id not in listing_cache:
                 listing_cache[ev.listing_id] = db.get(Listing, ev.listing_id)
             listing = listing_cache[ev.listing_id]
+        if deal_type and listing is not None and listing.deal_type != deal_type:
+            continue
+        if deal_type and listing is None:
+            continue
         d = _district_of(listing, ev.payload if isinstance(ev.payload, dict) else None)
         if d not in vanished:
             continue
@@ -87,7 +94,6 @@ def compute_seller_stress(db: Session, *, days: int = 7) -> list[DistrictStress]
         v, r, p = vanished[name], relisted[name], drops[name]
         if a == 0 and v == 0 and r == 0 and p == 0:
             continue
-        # Weighted pressure vs active stock; capped.
         base = a if a > 0 else 1
         raw = (v * 40 + r * 25 + p * 20) / base
         score = int(max(0, min(100, round(raw * 8))))
@@ -99,7 +105,10 @@ def compute_seller_stress(db: Session, *, days: int = 7) -> list[DistrictStress]
                 relisted_7d=r,
                 price_drops_7d=p,
                 active=a,
-                detail=f"зникло {v}, реліст {r}, дампи ціни {p}, активні {a}",
+                detail=(
+                    f"за 7 днів: зникло {v}, реліст {r}, зниження ціни {p}; "
+                    f"активних зараз {a}"
+                ),
             )
         )
     out.sort(key=lambda x: x.score, reverse=True)
