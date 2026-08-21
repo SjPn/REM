@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% set active_nav = "listings" %}
+{% block title %}Оголошення — EstateMonitor{% endblock %}
+{% block content %}
+  <p class="page-kicker">Моніторинг ринку</p>
+  <h1 class="page-title">Оголошення</h1>
+  <p class="page-lead">Офіси, шоуруми, street retail, БЦ та вільне призначення — Київ і область. Ціни з порталів, з посиланнями на оригінал.</p>
+
+  <section class="pulse" aria-label="Підсумок">
+    <div class="pulse-item">
+      <div class="pulse-n">{{ stats.active }}</div>
+      <div class="pulse-l">Активні</div>
+    </div>
+    <div class="pulse-item">
+      <div class="pulse-n">{{ stats.with_price }}</div>
+      <div class="pulse-l">З ціною</div>
+    </div>
+    <div class="pulse-item">
+      <div class="pulse-n">{{ stats.with_address }}</div>
+      <div class="pulse-l">З адресою</div>
+    </div>
+    <a class="pulse-item is-hot" href="/deals?bucket=likely_deal">
+      <div class="pulse-n">{{ stats.likely_deals }}</div>
+      <div class="pulse-l">Ймовірні угоди →</div>
+    </a>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Середня ціна м² · Київ</h2>
+      <a class="link-more" href="/market">Детально по районах →</a>
+    </div>
+    <div class="market-strip">
+      <div class="market-tile">
+        <div class="l">Продаж</div>
+        <div class="n">{{ fmt_psm(market.sale.city_avg_psm, 'sale') }}</div>
+        <div class="muted">медіана {{ fmt_psm(market.sale.city_median_psm, 'sale') }} · n={{ market.sale.city_count }}</div>
+      </div>
+      <div class="market-tile">
+        <div class="l">Оренда</div>
+        <div class="n">{{ fmt_psm(market.rent.city_avg_psm, 'rent') }}</div>
+        <div class="muted">медіана {{ fmt_psm(market.rent.city_median_psm, 'rent') }} · n={{ market.rent.city_count }}</div>
+      </div>
+    </div>
+    {% if district_rows %}
+    <div class="table-wrap district-mini">
+      <table>
+        <thead>
+          <tr>
+            <th>Район</th>
+            <th>Продаж $/м²</th>
+            <th>n</th>
+            <th>Оренда $/м²·міс</th>
+            <th>n</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in district_rows %}
+          <tr>
+            <td>{{ row.district }}</td>
+            <td class="num">{% if row.sale_avg is not none %}{{ '%.0f'|format(row.sale_avg) }}{% else %}—{% endif %}</td>
+            <td class="muted">{% if row.sale_n %}{{ row.sale_n }}{% else %}—{% endif %}</td>
+            <td class="num">{% if row.rent_avg is not none %}{{ '%.1f'|format(row.rent_avg) }}{% else %}—{% endif %}</td>
+            <td class="muted">{% if row.rent_n %}{{ row.rent_n }}{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <p class="empty">Поки мало даних з районами для розрахунку.</p>
+    {% endif %}
+  </section>
+
+  <form class="filters" method="get" action="/">
+    <input type="search" name="q" value="{{ q }}" placeholder="Вулиця, район, назва…" aria-label="Пошук" />
+    <select name="deal_type" aria-label="Тип угоди">
+      <option value="">Продаж / оренда</option>
+      <option value="sale" {% if deal_type == 'sale' %}selected{% endif %}>Продаж</option>
+      <option value="rent" {% if deal_type == 'rent' %}selected{% endif %}>Оренда</option>
+    </select>
+    <select name="source" aria-label="Портал">
+      <option value="">Усі портали</option>
+      {% for s in sources %}
+        <option value="{{ s }}" {% if source == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <select name="segment" aria-label="Сегмент">
+      <option value="">Усі сегменти</option>
+      {% for s in segments %}
+        <option value="{{ s }}" {% if segment == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Застосувати</button>
+  </form>
+
+  <section>
+    <div class="section-head">
+      <h2>Каталог</h2>
+      <span class="muted">{{ total }} знайдено · стор. {{ page }}/{{ pages }}</span>
+    </div>
+
+    {% if not listings %}
+      <p class="empty">Немає оголошень з ціною. Запустіть crawl: <code>python -m scripts.cli backfill</code></p>
+    {% else %}
+      <div class="listing-list">
+        {% for x in listings %}
+        <article class="listing">
+          <div class="listing-main">
+            <a class="listing-title" href="{{ x.url }}" target="_blank" rel="noopener noreferrer">
+              {{ x.title or 'Без назви' }}
+            </a>
+            <div class="listing-meta">
+              <span class="tag">{{ x.source }}</span>
+              <span class="tag {{ x.deal_type }}">{{ ua_deal_type(x.deal_type) }}</span>
+              {% if x.property_type %}<span class="tag">{{ x.property_type }}</span>{% endif %}
+              {% if x.floor is not none %}<span class="muted">поверх {{ x.floor }}</span>{% endif %}
+            </div>
+            <div class="listing-addr">
+              {% if x.address_raw %}{{ x.address_raw }}{% else %}<span class="warn-text">адреса не розпізнана</span>{% endif %}
+              {% if x.district %} · {{ x.district }}{% endif %}
+              {% if x.city %} · {{ x.city }}{% endif %}
+            </div>
+          </div>
+          <div class="listing-side">
+            <div class="price">{{ fmt_price(x.price, x.currency) }}</div>
+            {% set psm = fmt_listing_psm(x.price, x.currency, x.area_sqm, x.deal_type, x.price_per_sqm) %}
+            {% if psm %}<div class="psm">{{ psm }}</div>{% endif %}
+            <div class="area">
+              {% if x.area_sqm %}{{ x.area_sqm }} м²{% else %}<span class="warn-text">площа ?</span>{% endif %}
+            </div>
+            <div class="listing-links">
+              <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">на порталі ↗</a>
+              {% if x.property_id %}
+                <a href="/properties/{{ x.property_id }}">в системі</a>
+              {% endif %}
+            </div>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+
+      <nav class="pager" aria-label="Пагінація">
+        {% if page > 1 %}
+          <a href="?page={{ page - 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}">← Назад</a>
+        {% else %}
+          <span></span>
+        {% endif %}
+        <span>Сторінка {{ page }} з {{ pages }}</span>
+        {% if page < pages %}
+          <a href="?page={{ page + 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}">Далі →</a>
+        {% else %}
+          <span></span>
+        {% endif %}
+      </nav>
+    {% endif %}
+  </section>
+{% endblock %}

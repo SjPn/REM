@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% set active_nav = "market" %}
+{% block title %}Ринок м² — EstateMonitor{% endblock %}
+{% block content %}
+  <p class="page-kicker">Аналітика</p>
+  <h1 class="page-title">Ринок м² · Київ</h1>
+  <p class="page-lead">
+    Середні ціни по активних оголошеннях з ціною і площею. Валюти зведені до USD (орієнтовний курс).
+    Продаж і оренда рахуються окремо; явні викиди відфільтровані.
+  </p>
+
+  <div class="market-strip" style="margin-top: 1.35rem;">
+    <div class="market-tile">
+      <div class="l">Київ · продаж</div>
+      <div class="n">{{ fmt_psm(market.sale.city_avg_psm, 'sale') }}</div>
+      <div class="muted">
+        медіана {{ fmt_psm(market.sale.city_median_psm, 'sale') }} ·
+        вибірка {{ market.sale.city_count }}
+      </div>
+    </div>
+    <div class="market-tile">
+      <div class="l">Київ · оренда</div>
+      <div class="n">{{ fmt_psm(market.rent.city_avg_psm, 'rent') }}</div>
+      <div class="muted">
+        медіана {{ fmt_psm(market.rent.city_median_psm, 'rent') }} ·
+        вибірка {{ market.rent.city_count }}
+      </div>
+    </div>
+  </div>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>По районах</h2>
+    </div>
+    {% if not district_rows %}
+      <p class="empty">Недостатньо оголошень з визначеним районом.</p>
+    {% else %}
+      <div class="table-wrap">
+        <table class="market-table">
+          <thead>
+            <tr>
+              <th>Район</th>
+              <th>Продаж середнє</th>
+              <th>Продаж медіана</th>
+              <th>n</th>
+              <th>Оренда середнє</th>
+              <th>Оренда медіана</th>
+              <th>n</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in district_rows %}
+            <tr>
+              <td><strong>{{ row.district }}</strong></td>
+              <td class="num">{% if row.sale_avg is not none %}{{ '%.0f'|format(row.sale_avg) }} $/м²{% else %}—{% endif %}</td>
+              <td class="num">{% if row.sale_median is not none %}{{ '%.0f'|format(row.sale_median) }}{% else %}—{% endif %}</td>
+              <td class="muted">{{ row.sale_n or '—' }}</td>
+              <td class="num">{% if row.rent_avg is not none %}{{ '%.1f'|format(row.rent_avg) }} $/м²·міс{% else %}—{% endif %}</td>
+              <td class="num">{% if row.rent_median is not none %}{{ '%.1f'|format(row.rent_median) }}{% else %}—{% endif %}</td>
+              <td class="muted">{{ row.rent_n or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

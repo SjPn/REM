@@ -1,0 +1,60 @@
+from app.domain.deal_score import DealScoreInput, score_deal
+from app.domain.enums import DealBucket, DealType
+from app.domain.fingerprint import FingerprintInput, build_fingerprint, normalize_address
+from datetime import datetime, timedelta, timezone
+
+
+def test_fingerprint_stable_for_same_object():
+    a = FingerprintInput(
+        address="вул. Богдана Хмельницького, 16",
+        area_sqm=120,
+        floor=4,
+        property_type="office",
+        deal_type="rent",
+    )
+    b = FingerprintInput(
+        address="вул Богдана Хмельницького 16",
+        area_sqm=120.4,
+        floor=4,
+        property_type="office",
+        deal_type="rent",
+    )
+    assert build_fingerprint(a) == build_fingerprint(b)
+
+
+def test_normalize_address_strips_noise():
+    assert "київ" not in normalize_address("Київ, вул. Хрещатик, 1")
+
+
+def test_deal_score_likely_multi_source():
+    now = datetime.now(timezone.utc)
+    result = score_deal(
+        DealScoreInput(
+            deal_type=DealType.RENT,
+            vanished_at=now,
+            first_seen_at=now - timedelta(days=40),
+            last_price=2200,
+            previous_price=2500,
+            price_drop_count=1,
+            active_on_other_sources=0,
+            vanished_on_sources=2,
+            tracked_sources_for_property=2,
+        )
+    )
+    assert result.score >= 70
+    assert result.bucket == DealBucket.LIKELY_DEAL
+
+
+def test_deal_score_fast_single_source_withdrawn():
+    now = datetime.now(timezone.utc)
+    result = score_deal(
+        DealScoreInput(
+            deal_type=DealType.RENT,
+            vanished_at=now,
+            first_seen_at=now - timedelta(days=1),
+            vanished_on_sources=1,
+            tracked_sources_for_property=1,
+            active_on_other_sources=0,
+        )
+    )
+    assert result.bucket == DealBucket.LIKELY_WITHDRAWN
