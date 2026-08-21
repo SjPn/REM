@@ -48,22 +48,22 @@
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>Гипотезы сделок</h2></div>
+    <div class="section-head"><h2>Оценки возможных сделок</h2></div>
     {% if not hyps %}
-      <p class="empty">Нет гипотез.</p>
+      <p class="empty">Пока нет оценок.</p>
     {% else %}
       {% for h in hyps %}
         <div class="card">
           <div>
             <strong class="price" style="font-size:1.25rem;">{{ h.score }}</strong>
             · <span class="tag {{ h.bucket }}">{{ ua_bucket(h.bucket) }}</span>
-            · <span class="muted">label: {{ h.human_label or '—' }}</span>
+            · <span class="muted">ваша метка: {{ h.human_label or '—' }}</span>
           </div>
           <pre>{{ h.features }}</pre>
           <div class="row">
             <button onclick="labelHyp({{ h.id }}, 'deal')">Это сделка</button>
-            <button class="secondary" onclick="labelHyp({{ h.id }}, 'withdrawn')">Сняли</button>
-            <a class="link-more" href="/deals/{{ h.id }}">детали →</a>
+            <button class="secondary" onclick="labelHyp({{ h.id }}, 'withdrawn')">Просто сняли</button>
+            <a class="link-more" href="/deals/{{ h.id }}">подробнее →</a>
           </div>
         </div>
       {% endfor %}
@@ -71,12 +71,12 @@
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>Timeline</h2></div>
+    <div class="section-head"><h2>История</h2></div>
     <ul class="feed">
       {% for e in events %}
         <li><span class="tag">{{ ua_event(e.event_type) }}</span> {{ e.occurred_at }}</li>
       {% else %}
-        <li class="muted">Событий нет</li>
+        <li class="muted">Пока пусто</li>
       {% endfor %}
     </ul>
   </section>

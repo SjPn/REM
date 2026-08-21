@@ -1,20 +1,20 @@
 {% extends "base.html" %}
 {% set active_nav = "deals" %}
-{% block title %}Вероятные сделки — EstateMonitor{% endblock %}
+{% block title %}Возможные сделки — EstateMonitor{% endblock %}
 {% block content %}
-  <p class="page-kicker">Гипотезы</p>
-  <h1 class="page-title">Вероятные сделки</h1>
-  <p class="page-lead">Система оценивает исчезнувшие объявления по критериям. Это гипотеза, не подтверждённый факт сделки.</p>
+  <p class="page-kicker">Оценка исчезнувших объявлений</p>
+  <h1 class="page-title">Возможные сделки</h1>
+  <p class="page-lead">Когда объявление пропадает с сайтов, система оценивает: похоже на сделку или просто сняли. Это оценка, не факт.</p>
 
-  <nav class="deal-tabs" aria-label="Категории гипотез">
+  <nav class="deal-tabs" aria-label="Категории">
     <a class="{% if bucket == 'likely_deal' %}active{% endif %}" href="/deals?bucket=likely_deal">
-      Вероятные сделки ({{ counts.likely_deal }})
+      Похоже на сделку ({{ counts.likely_deal }})
     </a>
     <a class="{% if bucket == 'ambiguous' %}active{% endif %}" href="/deals?bucket=ambiguous">
-      Неопределённые ({{ counts.ambiguous }})
+      Неясно ({{ counts.ambiguous }})
     </a>
     <a class="{% if bucket == 'likely_withdrawn' %}active{% endif %}" href="/deals?bucket=likely_withdrawn">
-      Скорее сняли ({{ counts.likely_withdrawn }})
+      Скорее просто сняли ({{ counts.likely_withdrawn }})
     </a>
     <a class="{% if not bucket %}active{% endif %}" href="/deals?bucket=">
       Все ({{ counts.all }})
@@ -22,7 +22,7 @@
   </nav>
 
   {% if not cards %}
-    <p class="empty">Пока нет гипотез в этой категории. Они появятся после daily crawl, когда объявления исчезнут с порталов.</p>
+    <p class="empty">Пока пусто. Появятся после ежедневного сбора, когда объявления начнут исчезать с сайтов.</p>
   {% else %}
     <div class="deal-list">
       {% for c in cards %}
@@ -63,13 +63,13 @@
                   {{ f.detail }}
                 </li>
               {% else %}
-                <li class="muted">Нет расшифровки критериев</li>
+                <li class="muted">Нет деталей оценки</li>
               {% endfor %}
             </ul>
             <div class="listing-links row">
-              <a href="/deals/{{ h.id }}">детали решения →</a>
+              <a href="/deals/{{ h.id }}">почему так →</a>
               {% if lst and lst.url %}
-                <a href="{{ lst.url }}" target="_blank" rel="noopener noreferrer">на портале ↗</a>
+                <a href="{{ lst.url }}" target="_blank" rel="noopener noreferrer">открыть объявление ↗</a>
               {% endif %}
               {% if prop %}
                 <a href="/properties/{{ prop.id }}">карточка объекта</a>

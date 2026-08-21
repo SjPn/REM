@@ -101,28 +101,28 @@ def _fmt_listing_psm(
 
 _DEAL_TYPE_UA = {"sale": "Продажа", "rent": "Аренда"}
 _BUCKET_UA = {
-    "likely_deal": "Вероятная сделка",
-    "ambiguous": "Неопределённо",
-    "likely_withdrawn": "Скорее сняли",
+    "likely_deal": "Похоже на сделку",
+    "ambiguous": "Неясно",
+    "likely_withdrawn": "Скорее просто сняли",
 }
 _STATUS_UA = {
-    "active": "Активно",
-    "vanished": "Исчезло",
+    "active": "В сети",
+    "vanished": "Снято",
     "sold": "Продано",
     "rented": "Сдано",
-    "sold_marked": "Продано (метка)",
-    "rented_marked": "Сдано (метка)",
-    "relisted": "Повторная публикация",
+    "sold_marked": "Продано (с сайта)",
+    "rented_marked": "Сдано (с сайта)",
+    "relisted": "Снова в сети",
 }
 _EVENT_UA = {
-    "appeared": "Новое",
-    "price_changed": "Цена",
-    "status_changed": "Статус",
-    "vanished": "Исчезло",
+    "appeared": "Появилось",
+    "price_changed": "Цена изменилась",
+    "status_changed": "Статус изменился",
+    "vanished": "Снято с сайта",
     "relisted": "Снова выставили",
-    "content_changed": "Обновлено",
+    "content_changed": "Текст обновили",
 }
-_SELLER_UA = {"owner": "Собственник", "agency": "Агент", "unknown": "Продавец ?"}
+_SELLER_UA = {"owner": "Собственник", "agency": "Агентство", "unknown": "Неизвестно"}
 
 
 def _ua_deal_type(value: str | None) -> str:
@@ -457,7 +457,7 @@ def create_watch(
     below_market: int = Form(0),
     db: Session = Depends(get_db),
 ):
-    name = (name or "").strip()[:120] or "Фильтр"
+    name = (name or "").strip()[:120] or "Подборка"
     watch = WatchFilter(
         name=name,
         q=(q or "").strip() or None,

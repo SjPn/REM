@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% set active_nav = "deals" %}
-{% block title %}Сделка #{{ hyp.id }} — EstateMonitor{% endblock %}
+{% block title %}Оценка #{{ hyp.id }} — EstateMonitor{% endblock %}
 {% block content %}
-  <p class="page-kicker"><a href="/deals?bucket=likely_deal">← Вероятные сделки</a> · гипотеза #{{ hyp.id }}</p>
+  <p class="page-kicker"><a href="/deals?bucket=likely_deal">← Возможные сделки</a> · оценка #{{ hyp.id }}</p>
   <section class="deal-hero">
     <div>
       <h1 class="page-title" style="margin:0 0 0.45rem;">
@@ -23,20 +23,20 @@
     <div class="deal-score big">
       <div class="score-n">{{ hyp.score }}</div>
       <span class="tag {{ hyp.bucket }}">{{ ua_bucket(hyp.bucket) }}</span>
-      <div class="muted">вероятность сделки</div>
+      <div class="muted">оценка системы</div>
     </div>
   </section>
 
   <section class="section" style="margin-top:0;">
     <div class="section-head">
-      <h2>Почему так решили</h2>
+      <h2>Почему такая оценка</h2>
     </div>
-    <p class="muted" style="margin-top:0;">Score = сумма критериев (0–100). ≥70 — вероятная сделка, 40–69 — неопределённо, &lt;40 — скорее сняли с продажи.</p>
+    <p class="muted" style="margin-top:0;">Баллы складываются (0–100). От 70 — похоже на сделку, 40–69 — неясно, ниже 40 — скорее просто сняли.</p>
     {% if features %}
       <div class="table-wrap" style="margin-top:0.85rem;">
         <table class="criteria-table">
           <thead>
-            <tr><th>Баллы</th><th>Критерий</th><th>Пояснение</th></tr>
+            <tr><th>Баллы</th><th>Признак</th><th>Что увидели</th></tr>
           </thead>
           <tbody>
             {% for f in features %}
@@ -55,12 +55,12 @@
         </table>
       </div>
     {% else %}
-      <p class="empty">Нет features у гипотезы.</p>
+      <p class="empty">Нет деталей оценки.</p>
     {% endif %}
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>Объект / объявления</h2></div>
+    <div class="section-head"><h2>Объявления по объекту</h2></div>
     <div class="listing-list">
       {% for x in listings %}
       <article class="listing">
@@ -78,36 +78,36 @@
           {% if psm %}<div class="psm">{{ psm }}</div>{% endif %}
           <div class="area">{% if x.area_sqm %}{{ x.area_sqm }} м²{% else %}—{% endif %}</div>
           <div class="listing-links">
-            <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">на портале ↗</a>
+            <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">открыть объявление ↗</a>
           </div>
         </div>
       </article>
       {% else %}
-        <p class="empty">Нет привязанных объявлений.</p>
+        <p class="empty">Нет связанных объявлений.</p>
       {% endfor %}
     </div>
     {% if property %}
-      <p style="margin-top:0.85rem;"><a class="link-more" href="/properties/{{ property.id }}">полная карточка объекта #{{ property.id }} →</a></p>
+      <p style="margin-top:0.85rem;"><a class="link-more" href="/properties/{{ property.id }}">карточка объекта #{{ property.id }} →</a></p>
     {% endif %}
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>Разметка аналитиком</h2></div>
+    <div class="section-head"><h2>Ваша оценка</h2></div>
     <div class="actions-bar">
-      <button onclick="labelHyp({{ hyp.id }}, 'deal')">Подтвердить: сделка</button>
+      <button onclick="labelHyp({{ hyp.id }}, 'deal')">Да, это была сделка</button>
       <button class="secondary" onclick="labelHyp({{ hyp.id }}, 'withdrawn')">Нет, просто сняли</button>
-      <button class="ghost" onclick="labelHyp({{ hyp.id }}, 'unknown')">Неизвестно</button>
+      <button class="ghost" onclick="labelHyp({{ hyp.id }}, 'unknown')">Не знаю</button>
       <span class="muted">сейчас: {{ hyp.human_label or '—' }}</span>
     </div>
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>Timeline</h2></div>
+    <div class="section-head"><h2>История</h2></div>
     <ul class="feed">
       {% for e in events %}
         <li><span class="tag">{{ ua_event(e.event_type) }}</span> {{ e.occurred_at }}</li>
       {% else %}
-        <li class="muted">Событий нет</li>
+        <li class="muted">Пока пусто</li>
       {% endfor %}
     </ul>
   </section>

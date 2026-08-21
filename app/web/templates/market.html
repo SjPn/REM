@@ -2,10 +2,10 @@
 {% set active_nav = "market" %}
 {% block title %}Рынок — {{ 'Продажа' if mode == 'sale' else 'Аренда' }} — EstateMonitor{% endblock %}
 {% block content %}
-  <p class="page-kicker">Аналитика</p>
-  <h1 class="page-title">Рынок · {{ 'продажа' if mode == 'sale' else 'аренда' }}</h1>
+  <p class="page-kicker">Рынок · Киев</p>
+  <h1 class="page-title">{{ 'Продажа' if mode == 'sale' else 'Аренда' }} · цены и объём</h1>
   <p class="page-lead">
-    Сейчас в базе: <strong>{{ inventory.sale_total }}</strong> на продаже ·
+    В базе: <strong>{{ inventory.sale_total }}</strong> на продаже ·
     <strong>{{ inventory.rent_total }}</strong> в аренде.
   </p>
 
@@ -16,15 +16,15 @@
 
   <div class="market-strip" style="margin-top: 1.1rem;">
     <div class="market-tile">
-      <div class="l">Средняя $/м² · Киев</div>
+      <div class="l">Средняя цена м² · Киев</div>
       <div class="n">{{ fmt_psm(market_slice.city_avg_psm, mode) }}</div>
       <div class="muted">
         медиана {{ fmt_psm(market_slice.city_median_psm, mode) }} ·
-        объявлений в расчёте цены: {{ market_slice.city_count }}
+        посчитано по {{ market_slice.city_count }} объявлениям
       </div>
     </div>
     <div class="market-tile">
-      <div class="l">{% if mode == 'sale' %}Активных на продаже{% else %}Активных в аренде{% endif %}</div>
+      <div class="l">{% if mode == 'sale' %}Сейчас на продаже{% else %}Сейчас в аренде{% endif %}</div>
       <div class="n">
         {% if mode == 'sale' %}{{ inventory.sale_total }}{% else %}{{ inventory.rent_total }}{% endif %}
       </div>
@@ -37,21 +37,21 @@
 
   <section class="section">
     <div class="section-head">
-      <h2>По районам · {{ 'продажа' if mode == 'sale' else 'аренда' }}</h2>
+      <h2>По районам</h2>
     </div>
     {% if not mode_rows %}
-      <p class="empty">Мало данных по районам.</p>
+      <p class="empty">Пока мало данных по районам.</p>
     {% else %}
       <div class="table-wrap">
         <table class="market-table">
           <thead>
             <tr>
               <th>Район</th>
-              <th>{% if mode == 'sale' %}Сколько продаётся{% else %}Сколько сдаётся{% endif %}</th>
-              <th>Средняя $/м²</th>
-              <th>Медиана $/м²</th>
-              <th title="Объявления с ценой и площадью, из которых посчитали среднюю">В расчёте цены</th>
-              <th title="0–100 за 7 дней: снятия + повторные публикации + снижения цены. Гипотеза, не факт сделок.">Давление продавцов (0–100)</th>
+              <th>Объявлений</th>
+              <th>Средняя цена м²</th>
+              <th>Медиана м²</th>
+              <th title="Объявления с ценой и площадью">Посчитано по</th>
+              <th title="Как часто снимают, перевыставляют и уценивают. Не число сделок.">Индекс снятий</th>
             </tr>
           </thead>
           <tbody>
@@ -69,17 +69,16 @@
         </table>
       </div>
       <p class="muted" style="margin-top:0.65rem;">
-        <strong>Сколько продаётся / сдаётся</strong> — активные объявления сейчас.<br />
-        <strong>В расчёте цены</strong> — только те, где есть и цена, и площадь (для $/м²).<br />
-        <strong>Давление продавцов</strong> — насколько активно в районе снимают, перевыставляют и режут цену за неделю.
-        Это не число реальных сделок, а индикатор «нервозности» предложения.
+        <strong>Объявлений</strong> — сколько сейчас висит в сети.<br />
+        <strong>Посчитано по</strong> — из скольких объявлений с ценой и площадью взяли среднюю $/м².<br />
+        <strong>Индекс снятий</strong> — активность снятий / возвратов / уценок за неделю (0–100), не факт продаж.
       </p>
     {% endif %}
   </section>
 
   <section class="section">
     <div class="section-head">
-      <h2>Сравнение: продажа и аренда вместе</h2>
+      <h2>Продажа и аренда рядом</h2>
     </div>
     <div class="table-wrap">
       <table>
@@ -108,10 +107,10 @@
           </tr>
           {% endfor %}
           <tr>
-            <td><strong>Итого по Киеву</strong></td>
+            <td><strong>Всего по Киеву</strong></td>
             <td class="num"><strong>{{ inventory.sale_total }}</strong></td>
             <td class="num"><strong>{{ inventory.rent_total }}</strong></td>
-            <td class="muted" colspan="2">включая объекты без района</td>
+            <td class="muted" colspan="2">включая без района</td>
           </tr>
         </tbody>
       </table>
