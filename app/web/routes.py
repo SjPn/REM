@@ -37,7 +37,6 @@ from app.domain.signals import (
     listing_ids_for_price_drops,
     listing_ids_for_vanished,
     listing_psm_usd,
-    recent_events,
     resolve_listing_opex,
 )
 
@@ -332,12 +331,17 @@ def _period_since(period: str | None) -> datetime | None:
 
 
 def _phone_freq(db: Session) -> Counter[str]:
-    counts: Counter[str] = Counter()
-    for (phone,) in db.execute(select(Listing.phone).where(Listing.phone.is_not(None))):
-        digits = phone_digits(phone)
-        if digits:
-            counts[digits] += 1
-    return counts
+    from app.domain.ttl_cache import cache_get
+
+    def _build() -> Counter[str]:
+        counts: Counter[str] = Counter()
+        for (phone,) in db.execute(select(Listing.phone).where(Listing.phone.is_not(None))):
+            digits = phone_digits(phone)
+            if digits:
+                counts[digits] += 1
+        return counts
+
+    return cache_get("phone_freq", 120.0, _build)
 
 
 def _portal_counts(db: Session, property_ids: list[int]) -> dict[int, int]:
@@ -573,8 +577,6 @@ def dashboard(
         area_min, area_max = area_max, area_min
 
     activity = activity_summary(db, hours=24)
-    activity_7d = activity_summary(db, hours=168)
-    events = recent_events(db, hours=24, limit=25)
     watches = db.scalars(select(WatchFilter).order_by(WatchFilter.created_at.desc()).limit(20)).all()
     inventory = count_active_inventory(db)
 
@@ -771,8 +773,6 @@ def dashboard(
         "dashboard.html",
         {
             "activity": activity,
-            "activity_7d": activity_7d,
-            "events": events,
             "watches": watches,
             "signals": signals,
             "listings": listings,

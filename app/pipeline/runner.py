@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models import CrawlRun, utcnow
 from app.config import get_settings
 from app.domain.market_history import record_market_snapshot
+from app.domain.ttl_cache import cache_clear
 from app.pipeline.ingest import ingest_many
 from app.pipeline.reconcile import mark_vanished, rescore_all_vanished
 from app.scrapers import SCRAPERS, crawl_source
@@ -81,6 +82,7 @@ def run_crawl(
                 run.finished_at = utcnow()
                 db.commit()
 
+    cache_clear()
     rescored = rescore_all_vanished(db)
     try:
         snap = record_market_snapshot(db, force=True)

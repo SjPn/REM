@@ -118,43 +118,48 @@ def listing_ids_for_price_drops(
 
 def activity_summary(db: Session, *, hours: int = 24) -> dict[str, int]:
     """In-UI alert counters for the chosen window."""
-    since = _since(hours)
-    sold_or_rented = (
-        db.scalar(
-            select(func.count())
-            .select_from(Listing)
-            .where(
-                Listing.status.in_(
-                    [
-                        ListingStatus.SOLD_MARKED.value,
-                        ListingStatus.RENTED_MARKED.value,
-                    ]
-                ),
-                Listing.updated_at >= since,
+    from app.domain.ttl_cache import cache_get
+
+    def _build() -> dict[str, int]:
+        since = _since(hours)
+        sold_or_rented = (
+            db.scalar(
+                select(func.count())
+                .select_from(Listing)
+                .where(
+                    Listing.status.in_(
+                        [
+                            ListingStatus.SOLD_MARKED.value,
+                            ListingStatus.RENTED_MARKED.value,
+                        ]
+                    ),
+                    Listing.updated_at >= since,
+                )
             )
+            or 0
         )
-        or 0
-    )
-    likely_deals = (
-        db.scalar(
-            select(func.count())
-            .select_from(DealHypothesis)
-            .where(
-                DealHypothesis.bucket == "likely_deal",
-                DealHypothesis.created_at >= since,
+        likely_deals = (
+            db.scalar(
+                select(func.count())
+                .select_from(DealHypothesis)
+                .where(
+                    DealHypothesis.bucket == "likely_deal",
+                    DealHypothesis.created_at >= since,
+                )
             )
+            or 0
         )
-        or 0
-    )
-    return {
-        "hours": hours,
-        "new_listings": _count_events(db, EventType.APPEARED.value, since),
-        "vanished": _count_events(db, EventType.VANISHED.value, since),
-        "relisted": _count_events(db, EventType.RELISTED.value, since),
-        "price_drops": _price_drop_events(db, since),
-        "sold_or_rented": sold_or_rented,
-        "likely_deals": likely_deals,
-    }
+        return {
+            "hours": hours,
+            "new_listings": _count_events(db, EventType.APPEARED.value, since),
+            "vanished": _count_events(db, EventType.VANISHED.value, since),
+            "relisted": _count_events(db, EventType.RELISTED.value, since),
+            "price_drops": _price_drop_events(db, since),
+            "sold_or_rented": sold_or_rented,
+            "likely_deals": likely_deals,
+        }
+
+    return cache_get(f"activity_summary:{hours}", 30.0, _build)
 
 
 def recent_events(db: Session, *, hours: int = 24, limit: int = 40) -> list[PropertyEvent]:

@@ -81,6 +81,11 @@ def record_market_snapshot(db: Session, *, force: bool = False) -> MarketStatSna
 
 
 def ensure_today_snapshot(db: Session) -> MarketStatSnapshot:
+    """Return today's snapshot; compute only if missing (do not rebuild on every page view)."""
+    day = _day_key()
+    existing = db.scalar(select(MarketStatSnapshot).where(MarketStatSnapshot.day == day))
+    if existing is not None:
+        return existing
     return record_market_snapshot(db, force=True)
 
 
