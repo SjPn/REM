@@ -252,9 +252,60 @@ h2 {
 /* —— Pulse / stats —— */
 .pulse {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.65rem;
   margin-top: 1.35rem;
+}
+.listing.is-dealish {
+  border-color: rgba(12, 107, 92, 0.45);
+  background: linear-gradient(145deg, #ffffff, #eef8f4);
+}
+.tag.below { background: var(--deal-soft); border-color: #9dceb8; color: var(--accent-ink); }
+.tag.seller-owner { background: #e8f0f8; border-color: #b7cce0; color: #1d4a6b; }
+.tag.seller-agency { background: #f3eee8; border-color: #d2c2ae; color: #6a4a28; }
+.filter-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.filters {
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr 0.9fr 0.9fr 0.9fr auto auto;
+  gap: 0.5rem;
+  margin: 1.35rem 0 1.1rem;
+  padding: 0.7rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-soft);
+  position: sticky;
+  top: 4.4rem;
+  z-index: 20;
+  backdrop-filter: blur(10px);
+}
+.watch-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.watch-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 0.88rem;
+  font-weight: 600;
 }
 .pulse-item {
   position: relative;
@@ -370,21 +421,6 @@ tbody tr:last-child td { border-bottom: 0; }
 .district-mini { margin-top: 0.75rem; }
 
 /* —— Filters —— */
-.filters {
-  display: grid;
-  grid-template-columns: 1.7fr 1fr 1fr 1fr auto;
-  gap: 0.5rem;
-  margin: 1.35rem 0 1.1rem;
-  padding: 0.7rem;
-  border-radius: var(--radius);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow-soft);
-  position: sticky;
-  top: 4.4rem;
-  z-index: 20;
-  backdrop-filter: blur(10px);
-}
 .filters input,
 .filters select,
 button {

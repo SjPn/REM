@@ -20,11 +20,15 @@
           <a class="listing-title" href="{{ x.url }}" target="_blank" rel="noopener noreferrer">
             {{ x.title or x.url }}
           </a>
-          <div class="listing-meta">
-            <span class="tag">{{ x.source }}</span>
-            <span class="tag">{{ ua_status(x.status) }}</span>
-            {% if x.deal_type %}<span class="tag {{ x.deal_type }}">{{ ua_deal_type(x.deal_type) }}</span>{% endif %}
-          </div>
+            <div class="listing-meta">
+              <span class="tag">{{ x.source }}</span>
+              <span class="tag">{{ ua_status(x.status) }}</span>
+              {% if x.deal_type %}<span class="tag {{ x.deal_type }}">{{ ua_deal_type(x.deal_type) }}</span>{% endif %}
+              {% set sig = signals.get(x.id, {}) if signals is defined else {} %}
+              {% if sig.seller %}<span class="tag seller-{{ sig.seller }}">{{ ua_seller(sig.seller) }}</span>{% endif %}
+              {% if sig.below_market %}<span class="tag below">−{{ sig.discount_pct }}% до ринку</span>{% endif %}
+              {% if sig.cap_rate_pct %}<span class="tag">cap {{ sig.cap_rate_pct }}%</span>{% endif %}
+            </div>
           <div class="listing-addr">{{ x.address_raw or '—' }}</div>
         </div>
         <div class="listing-side">

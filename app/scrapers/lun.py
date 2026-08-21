@@ -22,7 +22,7 @@ from app.scrapers.detail import (
     postal_address_to_str,
 )
 from app.scrapers.enrich import enrich_listings
-from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area
+from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area, sleep_crawl_delay
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class LunScraper:
                 if not items:
                     break
                 batch.extend(items)
-                time.sleep(self.settings.crawl_delay_sec)
+                sleep_crawl_delay()
             yield from enrich_listings(self, batch)
 
     def parse_detail(self, html: str, listing: RawListing) -> RawListing:

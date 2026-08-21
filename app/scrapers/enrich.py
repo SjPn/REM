@@ -7,6 +7,7 @@ from typing import Protocol
 
 from app.config import get_settings
 from app.scrapers.base import RawListing
+from app.scrapers.http_utils import sleep_crawl_delay
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ def enrich_listings(
         try:
             detailed = scraper.fetch_detail(item)
             enriched += 1
-            time.sleep(settings.crawl_delay_sec)
+            sleep_crawl_delay()
             yield detailed
         except Exception as exc:  # noqa: BLE001
             logger.warning(

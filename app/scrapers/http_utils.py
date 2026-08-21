@@ -1,17 +1,40 @@
 from __future__ import annotations
 
 import math
+import random
 import re
+import time
 from typing import Any
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
 
 # Sanity bounds for commercial Kyiv listings
-_MAX_PRICE = 500_000_000  # 500M in any currency
+_MAX_PRICE = 500_000_000
 _MAX_AREA = 50_000
+
+
+class PortalBlockedError(RuntimeError):
+    """HTTP 403/429 — slow down, do not hammer."""
+
+    def __init__(self, status_code: int, url: str) -> None:
+        self.status_code = status_code
+        self.url = url
+        super().__init__(f"portal blocked {status_code} for {url}")
+
+
+def sleep_crawl_delay(*, blocked: bool = False) -> None:
+    """Polite delay with jitter. Longer pause after 403/429."""
+    settings = get_settings()
+    base = settings.crawl_delay_sec
+    jitter = settings.crawl_delay_jitter_sec
+    if blocked:
+        base = max(base * 4, settings.crawl_block_backoff_sec)
+        jitter = max(jitter, base * 0.3)
+    delay = max(0.2, base + random.uniform(-jitter, jitter))
+    time.sleep(delay)
 
 
 def parse_price(text: str | None) -> tuple[float | None, str | None]:
@@ -19,7 +42,6 @@ def parse_price(text: str | None) -> tuple[float | None, str | None]:
     if not text:
         return None, None
 
-    # Prefer explicit currency-adjacent patterns
     patterns = [
         (r"(?:USD|\$|дол(?:\.|арі|ларов)?)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "USD"),
         (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:USD|\$|дол)", "USD"),
@@ -36,7 +58,6 @@ def parse_price(text: str | None) -> tuple[float | None, str | None]:
         if value is not None:
             return value, cur
 
-    # Fallback: first standalone money-like number (4–9 digits), if currency hinted
     lower = text.lower()
     currency = None
     if "$" in text or "usd" in lower or "дол" in lower:
@@ -51,13 +72,11 @@ def parse_price(text: str | None) -> tuple[float | None, str | None]:
     m = re.search(r"\b(\d{1,3}(?:[ \u00a0]\d{3}){1,4}|\d{4,9})(?:[.,]\d+)?\b", text)
     if not m:
         return None, currency
-    value = _to_price_number(m.group(1))
-    return value, currency
+    return _to_price_number(m.group(1)), currency
 
 
 def _to_price_number(raw: str) -> float | None:
     cleaned = raw.replace("\xa0", "").replace(" ", "").replace(",", ".")
-    # 12.500 style thousands with dot
     if re.fullmatch(r"\d{1,3}(\.\d{3})+", cleaned):
         cleaned = cleaned.replace(".", "")
     try:
@@ -128,68 +147,19 @@ def guess_property_type(text: str | None) -> str:
 def is_kyiv_region_url(url: str) -> bool:
     """Accept only Kyiv city / Kyiv oblast listings by URL slug."""
     low = url.lower()
-    # Hard reject other cities (DOM.RIA uses both lviv/lvov etc.)
     foreign = (
-        "lvov",
-        "lviv",
-        "odessa",
-        "odesa",
-        "kharkov",
-        "kharkiv",
-        "dnipro",
-        "dnepr",
-        "vinnitsa",
-        "vinnyts",
-        "ternopol",
-        "ternopil",
-        "ivano",
-        "uzhgorod",
-        "chernovts",
-        "chernigov",
-        "chernihiv",
-        "poltava",
-        "zaporozh",
-        "zaporizh",
-        "nikolaev",
-        "mykolaiv",
-        "krivoy",
-        "kryvyi",
-        "rovno",
-        "rivne",
-        "lutsk",
-        "sumy",
-        "zhytomyr",
-        "khmeln",
-        "cherkass",
-        "kropivn",
-        "kropyvnytskyi",
-        "mariupol",
-        "kherson",
+        "lvov", "lviv", "odessa", "odesa", "kharkov", "kharkiv", "dnipro", "dnepr",
+        "vinnitsa", "vinnyts", "ternopol", "ternopil", "ivano", "uzhgorod", "chernovts",
+        "chernigov", "chernihiv", "poltava", "zaporozh", "zaporizh", "nikolaev", "mykolaiv",
+        "krivoy", "kryvyi", "rovno", "rivne", "lutsk", "sumy", "zhytomyr", "khmeln",
+        "cherkass", "kropivn", "kropyvnytskyi", "mariupol", "kherson",
     )
     if any(x in low for x in foreign):
         return False
     kyiv_markers = (
-        "kiev",
-        "kyiv",
-        "киев",
-        "київ",
-        "brovary",
-        "irpen",
-        "irpin",
-        "bucha",
-        "vyshneve",
-        "boyarka",
-        "obukhov",
-        "borschagov",
-        "borshchahiv",
-        "sofievsk",
-        "sofiivsk",
-        "petropavlovsk",
-        "vyshenki",
-        "hatne",
-        "glevakha",
-        "kotsyubinsk",
-        "kotsiubyns",
+        "kiev", "kyiv", "киев", "київ", "brovary", "irpen", "irpin", "bucha", "vyshneve",
+        "boyarka", "obukhov", "borschagov", "borshchahiv", "sofievsk", "sofiivsk",
+        "petropavlovsk", "vyshenki", "hatne", "glevakha", "kotsyubinsk", "kotsiubyns",
     )
     return any(x in low for x in kyiv_markers)
 
@@ -213,16 +183,32 @@ class HttpClient:
             verify=self.verify,
         )
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    def _raise_for_portal(self, resp: httpx.Response, url: str) -> None:
+        if resp.status_code in (403, 429):
+            sleep_crawl_delay(blocked=True)
+            raise PortalBlockedError(resp.status_code, url)
+        resp.raise_for_status()
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=30),
+        retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
+        reraise=True,
+    )
     def get_text(self, url: str, params: dict[str, Any] | None = None) -> str:
         with self._client() as client:
             resp = client.get(url, params=params)
-            resp.raise_for_status()
+            self._raise_for_portal(resp, url)
             return resp.text
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=30),
+        retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
+        reraise=True,
+    )
     def get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
         with self._client(Accept="application/json") as client:
             resp = client.get(url, params=params)
-            resp.raise_for_status()
+            self._raise_for_portal(resp, url)
             return resp.json()

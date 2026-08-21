@@ -5,8 +5,8 @@
   <p class="page-kicker">Аналітика</p>
   <h1 class="page-title">Ринок м² · Київ</h1>
   <p class="page-lead">
-    Середні ціни по активних оголошеннях з ціною і площею. Валюти зведені до USD (орієнтовний курс).
-    Продаж і оренда рахуються окремо; явні викиди відфільтровані.
+    Середні ціни по активних оголошеннях. Seller stress — гіпотеза тиску продавців по району
+    (зникнення, релісти, дампи ціни за 7 днів), не факт угод.
   </p>
 
   <div class="market-strip" style="margin-top: 1.35rem;">
@@ -46,6 +46,7 @@
               <th>Оренда середнє</th>
               <th>Оренда медіана</th>
               <th>n</th>
+              <th>Seller stress</th>
             </tr>
           </thead>
           <tbody>
@@ -58,6 +59,9 @@
               <td class="num">{% if row.rent_avg is not none %}{{ '%.1f'|format(row.rent_avg) }} $/м²·міс{% else %}—{% endif %}</td>
               <td class="num">{% if row.rent_median is not none %}{{ '%.1f'|format(row.rent_median) }}{% else %}—{% endif %}</td>
               <td class="muted">{{ row.rent_n or '—' }}</td>
+              <td class="num" title="{{ row.stress_detail }}">
+                {% if row.stress is not none %}{{ row.stress }}{% else %}—{% endif %}
+              </td>
             </tr>
             {% endfor %}
           </tbody>

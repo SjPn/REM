@@ -10,6 +10,7 @@ from app.db.models import Listing, ListingSnapshot, Property, PropertyEvent, utc
 from app.domain.enums import EventType, ListingStatus
 from app.domain.fingerprint import FingerprintInput, build_fingerprint, normalize_address
 from app.domain.segments import classify_segment
+from app.domain.signals import parse_cap_and_noi
 from app.scrapers.base import RawListing
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,17 @@ def _aware(dt: datetime | None) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def _merge_finance_signals(raw: RawListing) -> dict:
+    extra = dict(raw.extra or {})
+    found = parse_cap_and_noi(
+        " ".join(x for x in (raw.title, raw.description) if x)
+    )
+    # Only keep explicitly parsed fields; never invent.
+    for key, val in found.items():
+        extra[key] = val
+    return extra
 
 
 def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None) -> Listing | None:
@@ -78,6 +90,8 @@ def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None
             raw.price = None
 
     now = _aware(seen_at)
+    finance_extra = _merge_finance_signals(raw)
+    raw.extra = finance_extra
     listing = db.scalar(
         select(Listing).where(
             Listing.source == raw.source,
@@ -160,7 +174,7 @@ def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None
             source_status_raw=raw.source_status_raw,
             first_seen_at=now,
             last_seen_at=now,
-            raw_extra=raw.extra or None,
+            raw_extra=finance_extra or None,
         )
         db.add(listing)
         db.flush()
@@ -250,7 +264,7 @@ def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None
         else:
             listing.status = ListingStatus.ACTIVE.value
         listing.last_seen_at = now
-        listing.raw_extra = raw.extra or listing.raw_extra
+        listing.raw_extra = {**(listing.raw_extra or {}), **finance_extra} or listing.raw_extra
 
     db.add(
         ListingSnapshot(

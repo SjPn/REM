@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     )
 
     database_url: str = f"sqlite:///{DATA_DIR / 'estatemonitor.db'}"
-    crawl_delay_sec: float = 1.5
+    crawl_delay_sec: float = 1.8
+    crawl_delay_jitter_sec: float = 0.7
+    crawl_block_backoff_sec: float = 12.0
     crawl_max_pages: int = 5
     http_timeout_sec: float = 30.0
     http_verify_ssl: bool = False

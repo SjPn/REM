@@ -168,6 +168,25 @@ class CrawlRun(Base):
     error: Mapped[str | None] = mapped_column(Text)
 
 
+class WatchFilter(Base):
+    """Saved catalog filters (in-app watchlist, no external alerts)."""
+
+    __tablename__ = "watch_filters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    q: Mapped[str | None] = mapped_column(String(255))
+    source: Mapped[str | None] = mapped_column(String(32))
+    deal_type: Mapped[str | None] = mapped_column(String(16))
+    segment: Mapped[str | None] = mapped_column(String(64))
+    district: Mapped[str | None] = mapped_column(String(120))
+    period: Mapped[str | None] = mapped_column(String(16))  # 24h | 7d | ""
+    below_market: Mapped[bool] = mapped_column(Boolean, default=False)
+    price_min: Mapped[float | None] = mapped_column(Float)
+    price_max: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 _engine = None
 _SessionLocal = None
 
