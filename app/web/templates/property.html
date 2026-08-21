@@ -26,8 +26,9 @@
             {% if x.deal_type %}<span class="tag {{ x.deal_type }}">{{ ua_deal_type(x.deal_type) }}</span>{% endif %}
             {% set sig = signals.get(x.id, {}) if signals is defined else {} %}
             {% if sig.seller %}<span class="tag seller-{{ sig.seller }}">{{ ua_seller(sig.seller) }}</span>{% endif %}
-            {% if sig.below_market %}<span class="tag below">−{{ sig.discount_pct }}% к рынку</span>{% endif %}
-            {% if sig.cap_rate_pct %}<span class="tag">cap {{ sig.cap_rate_pct }}%</span>{% endif %}
+            {% if sig.below_market %}<span class="tag below">ниже рынка на {{ sig.discount_pct }}%</span>{% endif %}
+            {% if sig.opex %}<span class="tag opex-{{ sig.opex }}">{{ ua_opex(sig.opex) }}</span>{% endif %}
+            {% if sig.cap_rate_pct %}<span class="tag">доходность {{ sig.cap_rate_pct }}%</span>{% endif %}
           </div>
           <div class="listing-addr">{{ x.address_raw or '—' }}</div>
         </div>

@@ -199,6 +199,72 @@ _AGENCY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# OPEX / operating expenses in rent (explicit text only)
+OPEX_WITH = "with"
+OPEX_WITHOUT = "without"
+OPEX_UNKNOWN = "unknown"
+
+_OPEX_WITHOUT_RE = re.compile(
+    r"("
+    r"без\s*(?:opex|опекс)|"
+    r"\+\s*(?:opex|опекс)|"
+    r"(?:opex|опекс)\s*(?:окремо|отдельно)|"
+    r"не\s*включа\w*\s*(?:opex|опекс)|"
+    r"netto|net[\s\-]?rent|nnn|triple\s*net|"
+    r"чист[аяоїі]*\s*(?:оренд|аренд)|"
+    r"без\s*(?:комунал|коммунал)|"
+    r"(?:комуналка|коммуналка)\s*(?:окремо|отдельно)|"
+    r"(?:експлуатац|эксплуатац)\w*\s*(?:окремо|отдельно)"
+    r")",
+    re.IGNORECASE,
+)
+_OPEX_WITH_RE = re.compile(
+    r"("
+    # не матчить «з» внутри слова «без»
+    r"(?<![А-Яа-яІіЇїЄєҐґA-Za-z])(?:з|с|со)\s*(?:opex|опекс)|"
+    r"включа\w*\s*(?:opex|опекс)|включая\s*(?:opex|опекс)|включаючи\s*(?:opex|опекс)|"
+    r"включен\w*\s*(?:opex|опекс)|"
+    r"all\s*in(?:clusive)?|все\s*включен|"
+    r"грязн\w*\s*(?:оренд|аренд)|gross\s*rent|"
+    r"(?<![А-Яа-яІіЇїЄєҐґA-Za-z])(?:з|с)\s*(?:комунал|коммунал)|"
+    r"включа\w*\s*(?:комунал|коммунал|експлуатац|эксплуатац)|"
+    r"(?:opex|опекс)\s*включ"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def detect_opex(*parts: str | None) -> str:
+    """with | without | unknown — only from explicit listing text. Never invent."""
+    blob = " ".join(p for p in parts if p)
+    if not blob.strip():
+        return OPEX_UNKNOWN
+    has_without = bool(_OPEX_WITHOUT_RE.search(blob))
+    has_with = bool(_OPEX_WITH_RE.search(blob))
+    # «без OPEX» приоритетнее ложного «з OPEX» внутри того же слова
+    if has_without and not has_with:
+        return OPEX_WITHOUT
+    if has_with and not has_without:
+        return OPEX_WITH
+    if has_without and has_with:
+        # конфликт маркеров — не угадываем
+        return OPEX_UNKNOWN
+    return OPEX_UNKNOWN
+
+
+def resolve_listing_opex(listing) -> str:
+    """Prefer stored signal; else parse title/description."""
+    extra = getattr(listing, "raw_extra", None) or {}
+    stored = extra.get("opex")
+    if stored in (OPEX_WITH, OPEX_WITHOUT, OPEX_UNKNOWN):
+        # Re-check unknown from text if we can improve
+        if stored != OPEX_UNKNOWN:
+            return stored
+    return detect_opex(
+        getattr(listing, "title", None),
+        getattr(listing, "description", None),
+    )
+
 
 def classify_seller(
     *,

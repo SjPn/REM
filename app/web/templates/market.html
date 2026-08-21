@@ -21,6 +21,7 @@
       <div class="muted">
         медиана {{ fmt_psm(market_slice.city_median_psm, mode) }} ·
         посчитано по {{ market_slice.city_count }} объявлениям
+        {% if mode == 'rent' %} · {{ rent_slice_label }}{% endif %}
       </div>
     </div>
     <div class="market-tile">
@@ -34,6 +35,24 @@
       </div>
     </div>
   </div>
+
+  {% if mode == 'rent' %}
+  <div class="mode-tabs" style="margin-top:0.75rem;">
+    <a class="{% if not opex %}active{% endif %}" href="/market?mode=rent">Авто (лучше без OPEX)</a>
+    <a class="{% if opex == 'without' %}active{% endif %}" href="/market?mode=rent&opex=without">
+      Без OPEX ({{ market.rent_without_opex.city_count }})
+    </a>
+    <a class="{% if opex == 'with' %}active{% endif %}" href="/market?mode=rent&opex=with">
+      С OPEX ({{ market.rent_with_opex.city_count }})
+    </a>
+    <a class="{% if opex == 'unknown' %}active{% endif %}" href="/market?mode=rent&opex=unknown">
+      Не указан ({{ market.rent_opex_unknown.city_count }})
+    </a>
+  </div>
+  <p class="muted" style="margin-top:0.45rem;">
+    Сравниваем аренду внутри одной группы: с OPEX / без OPEX / не указано в тексте.
+  </p>
+  {% endif %}
 
   <section class="section">
     <div class="section-head">

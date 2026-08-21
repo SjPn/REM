@@ -149,7 +149,11 @@ def compute_market_stats(
     *,
     deal_type: str,
     status_active_only: bool = True,
+    opex_filter: str | None = None,
 ) -> MarketSlice:
+    """opex_filter for rent only: with | without | unknown | None (all)."""
+    from app.domain.signals import resolve_listing_opex
+
     q = select(Listing).where(
         Listing.deal_type == deal_type,
         Listing.price.is_not(None),
@@ -165,6 +169,9 @@ def compute_market_stats(
     city_vals: list[float] = []
 
     for lst in db.scalars(q):
+        if deal_type == "rent" and opex_filter:
+            if resolve_listing_opex(lst) != opex_filter:
+                continue
         usd = to_usd(float(lst.price), lst.currency)
         if usd is None or not math.isfinite(usd):
             continue
@@ -178,7 +185,6 @@ def compute_market_stats(
         district = normalize_district(lst.district) or extract_district(
             lst.address_raw, lst.title, lst.city
         )
-        # Only Kyiv city districts for district table; oblast goes to city average only if city is Kyiv
         city = (lst.city or "").lower()
         is_kyiv_city = "київ" in city or "киев" in city or "kyiv" in city
         if is_kyiv_city or district:
@@ -213,8 +219,33 @@ def compute_market_stats(
 def compute_all_market_stats(db: Session) -> dict[str, MarketSlice]:
     return {
         "sale": compute_market_stats(db, deal_type="sale"),
+        # Mixed rent (legacy / overview) — prefer cohort slices for decisions
         "rent": compute_market_stats(db, deal_type="rent"),
+        "rent_without_opex": compute_market_stats(
+            db, deal_type="rent", opex_filter="without"
+        ),
+        "rent_with_opex": compute_market_stats(
+            db, deal_type="rent", opex_filter="with"
+        ),
+        "rent_opex_unknown": compute_market_stats(
+            db, deal_type="rent", opex_filter="unknown"
+        ),
     }
+
+
+def pick_rent_market_slice(market: dict, opex: str | None = None) -> MarketSlice:
+    """Default rent view: without OPEX if enough sample, else mixed."""
+    if opex == "with":
+        return market["rent_with_opex"]
+    if opex == "without":
+        return market["rent_without_opex"]
+    if opex == "unknown":
+        return market["rent_opex_unknown"]
+    # auto: prefer net rent if we have a usable sample
+    net = market["rent_without_opex"]
+    if (net.city_count or 0) >= 15:
+        return net
+    return market["rent"]
 
 
 def count_active_inventory(db: Session) -> dict:

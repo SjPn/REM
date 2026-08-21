@@ -10,7 +10,7 @@ from app.db.models import Listing, ListingSnapshot, Property, PropertyEvent, utc
 from app.domain.enums import EventType, ListingStatus
 from app.domain.fingerprint import FingerprintInput, build_fingerprint, normalize_address
 from app.domain.segments import classify_segment
-from app.domain.signals import parse_cap_and_noi
+from app.domain.signals import detect_opex, parse_cap_and_noi
 from app.scrapers.base import RawListing
 
 logger = logging.getLogger(__name__)
@@ -39,12 +39,13 @@ def _aware(dt: datetime | None) -> datetime:
 
 def _merge_finance_signals(raw: RawListing) -> dict:
     extra = dict(raw.extra or {})
-    found = parse_cap_and_noi(
-        " ".join(x for x in (raw.title, raw.description) if x)
-    )
+    text = " ".join(x for x in (raw.title, raw.description) if x)
+    found = parse_cap_and_noi(text)
     # Only keep explicitly parsed fields; never invent.
     for key, val in found.items():
         extra[key] = val
+    if (raw.deal_type or "").lower() == "rent":
+        extra["opex"] = detect_opex(raw.title, raw.description)
     return extra
 
 

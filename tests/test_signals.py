@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.domain.signals import (
     below_market_hint,
     classify_seller,
+    detect_opex,
     parse_cap_and_noi,
 )
 from app.scrapers.http_utils import PortalBlockedError, sleep_crawl_delay
@@ -14,6 +15,15 @@ def test_parse_cap_and_noi_explicit_only():
     assert got["cap_rate_pct"] == 8.5
     assert got["noi"] == 120000.0
     assert parse_cap_and_noi("просто офіс без цифр") == {}
+
+
+def test_detect_opex():
+    assert detect_opex("Аренда офиса, без OPEX") == "without"
+    assert detect_opex("Оренда, + OPEX окремо") == "without"
+    assert detect_opex("Ставка с OPEX включена") == "with"
+    assert detect_opex("Все включено, all inclusive") == "with"
+    assert detect_opex("Просто офис 100 м2") == "unknown"
+    assert detect_opex("с opex", "но без opex") == "unknown"
 
 
 def test_below_market_hint():

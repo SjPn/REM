@@ -54,6 +54,7 @@
         <div class="muted">
           медиана {{ fmt_psm(market_slice.city_median_psm, deal_type) }} ·
           посчитано по {{ market_slice.city_count }} объявлениям
+          {% if deal_type == 'rent' %} · {{ rent_slice_label }}{% endif %}
         </div>
       </div>
       <div class="market-tile">
@@ -66,6 +67,25 @@
         </div>
       </div>
     </div>
+
+    {% if deal_type == 'rent' %}
+    <div class="mode-tabs" style="margin-top:0.75rem;">
+      <a class="{% if not opex %}active{% endif %}" href="/?deal_type=rent">Авто (лучше без OPEX)</a>
+      <a class="{% if opex == 'without' %}active{% endif %}" href="/?deal_type=rent&opex=without">
+        Без OPEX ({{ market.rent_without_opex.city_count }})
+      </a>
+      <a class="{% if opex == 'with' %}active{% endif %}" href="/?deal_type=rent&opex=with">
+        С OPEX ({{ market.rent_with_opex.city_count }})
+      </a>
+      <a class="{% if opex == 'unknown' %}active{% endif %}" href="/?deal_type=rent&opex=unknown">
+        Не указан ({{ market.rent_opex_unknown.city_count }})
+      </a>
+    </div>
+    <p class="muted" style="margin-top:0.45rem;">
+      OPEX (эксплуатация) часто сидит в цене аренды. Сравниваем только одинаковые группы;
+      если в тексте не написано — попадает в «не указан».
+    </p>
+    {% endif %}
 
     {% if mode_rows %}
     <div class="table-wrap" style="margin-top:0.85rem;">
@@ -106,6 +126,7 @@
 
   <form class="filters" method="get" action="/">
     <input type="hidden" name="deal_type" value="{{ deal_type }}" />
+    {% if opex %}<input type="hidden" name="opex" value="{{ opex }}" />{% endif %}
     <input type="search" name="q" value="{{ q }}" placeholder="Улица, район, название…" aria-label="Поиск" />
     <select name="source" aria-label="Сайт">
       <option value="">Все сайты</option>
@@ -181,6 +202,9 @@
               <span class="tag {{ x.deal_type }}">{{ ua_deal_type(x.deal_type) }}</span>
               {% if x.property_type %}<span class="tag">{{ x.property_type }}</span>{% endif %}
               {% if sig.seller %}<span class="tag seller-{{ sig.seller }}">{{ ua_seller(sig.seller) }}</span>{% endif %}
+              {% if sig.opex %}
+                <span class="tag opex-{{ sig.opex }}">{{ ua_opex(sig.opex) }}</span>
+              {% endif %}
               {% if sig.below_market %}
                 <span class="tag below">ниже рынка на {{ sig.discount_pct }}%</span>
               {% endif %}
@@ -213,11 +237,11 @@
 
       <nav class="pager">
         {% if page > 1 %}
-          <a href="?page={{ page - 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}&period={{ period }}&below_market={{ below_market }}">← Назад</a>
+          <a href="?page={{ page - 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}&period={{ period }}{% if opex %}&opex={{ opex }}{% endif %}&below_market={{ below_market }}">← Назад</a>
         {% else %}<span></span>{% endif %}
         <span>Страница {{ page }} из {{ pages }}</span>
         {% if page < pages %}
-          <a href="?page={{ page + 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}&period={{ period }}&below_market={{ below_market }}">Дальше →</a>
+          <a href="?page={{ page + 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}&period={{ period }}{% if opex %}&opex={{ opex }}{% endif %}&below_market={{ below_market }}">Дальше →</a>
         {% else %}<span></span>{% endif %}
       </nav>
     {% endif %}

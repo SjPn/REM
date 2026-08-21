@@ -205,6 +205,31 @@ def clean_junk() -> None:
     rprint({"removed_non_kyiv": removed, "nulled_bad_prices": fixed_price, "orphan_props": orphans})
 
 
+@app.command("backfill-opex")
+def backfill_opex() -> None:
+    """Parse OPEX markers from rent listing text into raw_extra.opex."""
+    from sqlalchemy import select
+
+    from app.db.models import Listing
+    from app.domain.signals import detect_opex
+
+    init_db()
+    SessionLocal = get_session_factory()
+    updated = 0
+    counts = {"with": 0, "without": 0, "unknown": 0}
+    with SessionLocal() as db:
+        for lst in db.scalars(select(Listing).where(Listing.deal_type == "rent")):
+            flag = detect_opex(lst.title, lst.description)
+            extra = dict(lst.raw_extra or {})
+            if extra.get("opex") != flag:
+                extra["opex"] = flag
+                lst.raw_extra = extra
+                updated += 1
+            counts[flag] = counts.get(flag, 0) + 1
+        db.commit()
+    rprint({"updated": updated, "counts": counts})
+
+
 @app.command("reclassify")
 def reclassify() -> None:
     """Recompute segment tags for all listings (fixes noisy list-card mis-tags)."""

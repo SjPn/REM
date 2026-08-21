@@ -20,13 +20,18 @@ from app.domain.market_stats import (
     compute_all_market_stats,
     count_active_inventory,
     district_label_ru,
+    pick_rent_market_slice,
 )
 from app.domain.seller_stress import compute_seller_stress
 from app.domain.signals import (
+    OPEX_UNKNOWN,
+    OPEX_WITH,
+    OPEX_WITHOUT,
     activity_summary,
     below_market_hint,
     classify_seller,
     recent_events,
+    resolve_listing_opex,
 )
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -123,6 +128,11 @@ _EVENT_UA = {
     "content_changed": "Текст обновили",
 }
 _SELLER_UA = {"owner": "Собственник", "agency": "Агентство", "unknown": "Неизвестно"}
+_OPEX_RU = {
+    OPEX_WITH: "С OPEX",
+    OPEX_WITHOUT: "Без OPEX",
+    OPEX_UNKNOWN: "OPEX не указан",
+}
 
 
 def _ua_deal_type(value: str | None) -> str:
@@ -155,6 +165,12 @@ def _ua_seller(value: str | None) -> str:
     return _SELLER_UA.get(value, value)
 
 
+def _ua_opex(value: str | None) -> str:
+    if not value:
+        return ""
+    return _OPEX_RU.get(value, value)
+
+
 templates.env.globals["fmt_price"] = _fmt_price
 templates.env.globals["fmt_psm"] = _fmt_psm
 templates.env.globals["fmt_listing_psm"] = _fmt_listing_psm
@@ -163,6 +179,7 @@ templates.env.globals["ua_bucket"] = _ua_bucket
 templates.env.globals["ua_status"] = _ua_status
 templates.env.globals["ua_event"] = _ua_event
 templates.env.globals["ua_seller"] = _ua_seller
+templates.env.globals["ua_opex"] = _ua_opex
 templates.env.globals["district_ru"] = district_label_ru
 
 
@@ -200,19 +217,32 @@ def _annotate_listings(
     market: dict,
 ) -> dict[int, dict]:
     sale_med = {d.district: d.median_psm for d in market["sale"].districts}
-    rent_med = {d.district: d.median_psm for d in market["rent"].districts}
+    rent_net_med = {
+        d.district: d.median_psm for d in market["rent_without_opex"].districts
+    }
+    rent_gross_med = {
+        d.district: d.median_psm for d in market["rent_with_opex"].districts
+    }
+    rent_all_med = {d.district: d.median_psm for d in market["rent"].districts}
     phones = _phone_freq(db)
     portals = _portal_counts(
         db, [x.property_id for x in listings if x.property_id is not None]
     )
     out: dict[int, dict] = {}
     for x in listings:
-        med_map = sale_med if x.deal_type == "sale" else rent_med
-        city_med = (
-            market["sale"].city_median_psm
-            if x.deal_type == "sale"
-            else market["rent"].city_median_psm
-        )
+        opex = resolve_listing_opex(x) if x.deal_type == "rent" else None
+        if x.deal_type == "sale":
+            med_map = sale_med
+            city_med = market["sale"].city_median_psm
+        elif opex == OPEX_WITHOUT and market["rent_without_opex"].city_count:
+            med_map = rent_net_med
+            city_med = market["rent_without_opex"].city_median_psm
+        elif opex == OPEX_WITH and market["rent_with_opex"].city_count:
+            med_map = rent_gross_med
+            city_med = market["rent_with_opex"].city_median_psm
+        else:
+            med_map = rent_all_med
+            city_med = market["rent"].city_median_psm
         hint = below_market_hint(
             price=x.price,
             currency=x.currency,
@@ -241,32 +271,9 @@ def _annotate_listings(
             "portals": portals.get(x.property_id, 1) if x.property_id else 1,
             "cap_rate_pct": extra.get("cap_rate_pct"),
             "noi": extra.get("noi"),
+            "opex": opex,
         }
     return out
-
-
-def _district_rows(market: dict, *, with_median: bool = False) -> list[dict]:
-    sale_by = {d.district: d for d in market["sale"].districts}
-    rent_by = {d.district: d for d in market["rent"].districts}
-    rows = []
-    for name in KYIV_DISTRICTS:
-        s = sale_by.get(name)
-        r = rent_by.get(name)
-        if not s and not r:
-            continue
-        row = {
-            "district": name,
-            "sale_avg": s.avg_psm if s else None,
-            "sale_n": s.count if s else 0,
-            "rent_avg": r.avg_psm if r else None,
-            "rent_n": r.count if r else 0,
-        }
-        if with_median:
-            row["sale_median"] = s.median_psm if s else None
-            row["rent_median"] = r.median_psm if r else None
-        rows.append(row)
-    rows.sort(key=lambda x: (x["sale_avg"] is None, -(x["sale_avg"] or 0), -(x["rent_avg"] or 0)))
-    return rows
 
 
 def _mode_district_rows(
@@ -275,9 +282,13 @@ def _mode_district_rows(
     stress_map: dict,
     *,
     mode: str,
+    opex: str | None = None,
 ) -> list[dict]:
     """Rows for one deal mode: inventory + $/m² sample + seller pressure."""
-    slice_ = market["sale"] if mode == "sale" else market["rent"]
+    if mode == "sale":
+        slice_ = market["sale"]
+    else:
+        slice_ = pick_rent_market_slice(market, opex)
     by_price = {d.district: d for d in slice_.districts}
     inv_by = {d["district"]: d for d in inventory["districts"]}
     rows = []
@@ -304,6 +315,32 @@ def _mode_district_rows(
     return rows
 
 
+def _district_rows(market: dict, *, with_median: bool = False) -> list[dict]:
+    sale_by = {d.district: d for d in market["sale"].districts}
+    # Compare table uses net rent when available enough, else mixed
+    rent_slice = pick_rent_market_slice(market)
+    rent_by = {d.district: d for d in rent_slice.districts}
+    rows = []
+    for name in KYIV_DISTRICTS:
+        s = sale_by.get(name)
+        r = rent_by.get(name)
+        if not s and not r:
+            continue
+        row = {
+            "district": name,
+            "sale_avg": s.avg_psm if s else None,
+            "sale_n": s.count if s else 0,
+            "rent_avg": r.avg_psm if r else None,
+            "rent_n": r.count if r else 0,
+        }
+        if with_median:
+            row["sale_median"] = s.median_psm if s else None
+            row["rent_median"] = r.median_psm if r else None
+        rows.append(row)
+    rows.sort(key=lambda x: (x["sale_avg"] is None, -(x["sale_avg"] or 0), -(x["rent_avg"] or 0)))
+    return rows
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
@@ -313,6 +350,7 @@ def dashboard(
     segment: str | None = None,
     q: str | None = None,
     period: str | None = None,
+    opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
     below_market: int = Query(0, ge=0, le=1),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=10, le=100),
@@ -347,54 +385,67 @@ def dashboard(
         )
 
     market = compute_all_market_stats(db)
-    sale_med = {d.district: d.median_psm for d in market["sale"].districts}
-    rent_med = {d.district: d.median_psm for d in market["rent"].districts}
+    opex_mode = opex if deal_type == "rent" else None
     stress_map = {s.district: s for s in compute_seller_stress(db, deal_type=deal_type)}
-    mode_rows = _mode_district_rows(market, inventory, stress_map, mode=deal_type)
-    market_slice = market[deal_type]
+    mode_rows = _mode_district_rows(
+        market, inventory, stress_map, mode=deal_type, opex=opex_mode
+    )
+    if deal_type == "rent":
+        market_slice = pick_rent_market_slice(market, opex_mode)
+        rent_slice_label = {
+            None: (
+                "без OPEX"
+                if (market["rent_without_opex"].city_count or 0) >= 15
+                else "все объявления (OPEX смешан)"
+            ),
+            "without": "без OPEX",
+            "with": "с OPEX",
+            "unknown": "OPEX не указан",
+        }.get(opex_mode, "аренда")
+    else:
+        market_slice = market["sale"]
+        rent_slice_label = ""
 
     if below_market:
         candidates = db.scalars(
             select(Listing).where(*filters).order_by(Listing.first_seen_at.desc()).limit(2000)
         ).all()
-        kept: list[Listing] = []
-        for x in candidates:
-            med_map = sale_med if x.deal_type == "sale" else rent_med
-            city_med = (
-                market["sale"].city_median_psm
-                if x.deal_type == "sale"
-                else market["rent"].city_median_psm
-            )
-            hint = below_market_hint(
-                price=x.price,
-                currency=x.currency,
-                area=x.area_sqm,
-                deal_type=x.deal_type,
-                district=x.district,
-                address=x.address_raw,
-                title=x.title,
-                city=x.city,
-                median_by_district=med_map,
-                city_median=city_med,
-            )
-            if hint.below_market:
-                kept.append(x)
+        # Annotate then filter — uses OPEX-aware medians
+        signals_tmp = _annotate_listings(db, candidates, market)
+        kept = [x for x in candidates if signals_tmp.get(x.id, {}).get("below_market")]
+        if opex_mode:
+            kept = [
+                x
+                for x in kept
+                if signals_tmp.get(x.id, {}).get("opex") == opex_mode
+            ]
         total = len(kept)
         pages = max(1, (total + per_page - 1) // per_page)
         page = min(page, pages)
         offset = (page - 1) * per_page
         listings = kept[offset : offset + per_page]
+        signals = {i.id: signals_tmp[i.id] for i in listings}
     else:
-        total = db.scalar(select(func.count()).select_from(Listing).where(*filters)) or 0
-        pages = max(1, (total + per_page - 1) // per_page)
-        page = min(page, pages)
-        offset = (page - 1) * per_page
         order = Listing.first_seen_at.desc() if period else Listing.last_seen_at.desc()
-        listings = db.scalars(
-            select(Listing).where(*filters).order_by(order).offset(offset).limit(per_page)
+        candidates = db.scalars(
+            select(Listing).where(*filters).order_by(order).limit(2000 if opex_mode else per_page * page)
         ).all()
-
-    signals = _annotate_listings(db, listings, market)
+        if opex_mode:
+            candidates = [x for x in candidates if resolve_listing_opex(x) == opex_mode]
+            total = len(candidates)
+            pages = max(1, (total + per_page - 1) // per_page)
+            page = min(page, pages)
+            offset = (page - 1) * per_page
+            listings = candidates[offset : offset + per_page]
+        else:
+            total = db.scalar(select(func.count()).select_from(Listing).where(*filters)) or 0
+            pages = max(1, (total + per_page - 1) // per_page)
+            page = min(page, pages)
+            offset = (page - 1) * per_page
+            listings = db.scalars(
+                select(Listing).where(*filters).order_by(order).offset(offset).limit(per_page)
+            ).all()
+        signals = _annotate_listings(db, listings, market)
 
     segments = [
         r[0]
@@ -435,11 +486,13 @@ def dashboard(
             "segment": segment or "",
             "q": q or "",
             "period": period or "",
+            "opex": opex_mode or "",
             "below_market": below_market,
             "segments": segments,
             "sources": sources,
             "market": market,
             "market_slice": market_slice,
+            "rent_slice_label": rent_slice_label,
             "inventory": inventory,
             "mode_rows": mode_rows,
         },
@@ -494,12 +547,30 @@ def market_page(
     request: Request,
     db: Session = Depends(get_db),
     mode: str = Query("sale", pattern="^(sale|rent)$"),
+    opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
 ):
     market = compute_all_market_stats(db)
     inventory = count_active_inventory(db)
     stress_map = {s.district: s for s in compute_seller_stress(db, deal_type=mode)}
-    mode_rows = _mode_district_rows(market, inventory, stress_map, mode=mode)
-    market_slice = market[mode]
+    opex_mode = opex if mode == "rent" else None
+    mode_rows = _mode_district_rows(
+        market, inventory, stress_map, mode=mode, opex=opex_mode
+    )
+    if mode == "rent":
+        market_slice = pick_rent_market_slice(market, opex_mode)
+        rent_slice_label = {
+            None: (
+                "без OPEX"
+                if (market["rent_without_opex"].city_count or 0) >= 15
+                else "все (OPEX смешан)"
+            ),
+            "without": "без OPEX",
+            "with": "с OPEX",
+            "unknown": "OPEX не указан",
+        }.get(opex_mode, "")
+    else:
+        market_slice = market["sale"]
+        rent_slice_label = ""
     compare_rows = _district_rows(market, with_median=True)
     compare_by = {r["district"]: r for r in compare_rows}
     return templates.TemplateResponse(
@@ -507,8 +578,10 @@ def market_page(
         "market.html",
         {
             "mode": mode,
+            "opex": opex_mode or "",
             "market": market,
             "market_slice": market_slice,
+            "rent_slice_label": rent_slice_label,
             "inventory": inventory,
             "mode_rows": mode_rows,
             "compare_by": compare_by,
