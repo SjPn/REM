@@ -476,8 +476,17 @@ a.ov-card:hover {
 .filters input[type="search"] { flex: 1 1 14rem; min-width: 10rem; }
 .filters select,
 .filters button,
-.filters .filter-check {
+.filters .filter-check,
+.filters .filter-range {
   flex: 0 1 auto;
+}
+.filter-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.filter-range input[type="number"] {
+  width: 6.2rem;
 }
 .filters input,
 .filters select,

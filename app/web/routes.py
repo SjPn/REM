@@ -21,6 +21,7 @@ from app.domain.market_stats import (
     count_active_inventory,
     district_label_ru,
     pick_rent_market_slice,
+    to_usd,
 )
 from app.domain.seller_stress import compute_seller_stress
 from app.domain.signals import (
@@ -30,12 +31,129 @@ from app.domain.signals import (
     activity_summary,
     below_market_hint,
     classify_seller,
+    listing_psm_usd,
     recent_events,
     resolve_listing_opex,
 )
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 router = APIRouter()
+
+_SORT_VALUES = frozenset(
+    {
+        "newest",
+        "oldest",
+        "price_asc",
+        "price_desc",
+        "area_asc",
+        "area_desc",
+        "psm_asc",
+        "psm_desc",
+    }
+)
+
+
+def _parse_optional_float(value: float | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v) or v < 0:
+        return None
+    return v
+
+
+def _listing_price_usd(lst: Listing) -> float | None:
+    if lst.price is None:
+        return None
+    try:
+        return to_usd(float(lst.price), lst.currency)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sql_order(sort: str, *, period: str | None):
+    if sort == "price_asc":
+        return Listing.price.asc()
+    if sort == "price_desc":
+        return Listing.price.desc()
+    if sort == "area_asc":
+        return Listing.area_sqm.asc()
+    if sort == "area_desc":
+        return Listing.area_sqm.desc()
+    if sort == "psm_asc":
+        return Listing.price_per_sqm.asc()
+    if sort == "psm_desc":
+        return Listing.price_per_sqm.desc()
+    if sort == "oldest":
+        return Listing.first_seen_at.asc()
+    # newest
+    if period:
+        return Listing.first_seen_at.desc()
+    return Listing.last_seen_at.desc()
+
+
+def _sort_listings_in_memory(rows: list[Listing], sort: str) -> list[Listing]:
+    """Stable-ish sorts; USD for price/psm so UAH and USD don't mix wrongly."""
+    reverse = sort.endswith("_desc") or sort == "newest"
+
+    def key_price(x: Listing):
+        v = _listing_price_usd(x)
+        return (v is None, v if v is not None else 0.0)
+
+    def key_area(x: Listing):
+        v = float(x.area_sqm) if x.area_sqm is not None else None
+        return (v is None, v if v is not None else 0.0)
+
+    def key_psm(x: Listing):
+        v = listing_psm_usd(x.price, x.currency, x.area_sqm)
+        return (v is None, v if v is not None else 0.0)
+
+    def key_seen(x: Listing):
+        ts = x.first_seen_at if sort in ("newest", "oldest") else x.last_seen_at
+        return ts or datetime.min.replace(tzinfo=timezone.utc)
+
+    if sort in ("price_asc", "price_desc"):
+        rows = sorted(rows, key=key_price, reverse=reverse)
+    elif sort in ("area_asc", "area_desc"):
+        rows = sorted(rows, key=key_area, reverse=reverse)
+    elif sort in ("psm_asc", "psm_desc"):
+        rows = sorted(rows, key=key_psm, reverse=reverse)
+    elif sort == "oldest":
+        rows = sorted(rows, key=key_seen, reverse=False)
+    elif sort == "newest":
+        rows = sorted(rows, key=key_seen, reverse=True)
+    return rows
+
+
+def _apply_range_filters(
+    rows: list[Listing],
+    *,
+    price_min: float | None,
+    price_max: float | None,
+    area_min: float | None,
+    area_max: float | None,
+) -> list[Listing]:
+    out: list[Listing] = []
+    for x in rows:
+        if area_min is not None:
+            if x.area_sqm is None or float(x.area_sqm) < area_min:
+                continue
+        if area_max is not None:
+            if x.area_sqm is None or float(x.area_sqm) > area_max:
+                continue
+        if price_min is not None or price_max is not None:
+            usd = _listing_price_usd(x)
+            if usd is None:
+                continue
+            if price_min is not None and usd < price_min:
+                continue
+            if price_max is not None and usd > price_max:
+                continue
+        out.append(x)
+    return out
 
 
 def _fmt_price(price: float | None, currency: str | None) -> str:
@@ -352,9 +470,25 @@ def dashboard(
     period: str | None = None,
     opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
     below_market: int = Query(0, ge=0, le=1),
+    sort: str = Query("newest"),
+    price_min: float | None = Query(None),
+    price_max: float | None = Query(None),
+    area_min: float | None = Query(None),
+    area_max: float | None = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=10, le=100),
 ):
+    if sort not in _SORT_VALUES:
+        sort = "newest"
+    price_min = _parse_optional_float(price_min)
+    price_max = _parse_optional_float(price_max)
+    area_min = _parse_optional_float(area_min)
+    area_max = _parse_optional_float(area_max)
+    if price_min is not None and price_max is not None and price_min > price_max:
+        price_min, price_max = price_max, price_min
+    if area_min is not None and area_max is not None and area_min > area_max:
+        area_min, area_max = area_max, area_min
+
     activity = activity_summary(db, hours=24)
     activity_7d = activity_summary(db, hours=168)
     events = recent_events(db, hours=24, limit=25)
@@ -383,6 +517,11 @@ def dashboard(
                 Listing.city.ilike(like),
             )
         )
+    # Area can be narrowed in SQL; price ranges use USD in Python (mixed currencies).
+    if area_min is not None:
+        filters.append(Listing.area_sqm >= area_min)
+    if area_max is not None:
+        filters.append(Listing.area_sqm <= area_max)
 
     market = compute_all_market_stats(db)
     opex_mode = opex if deal_type == "rent" else None
@@ -406,45 +545,58 @@ def dashboard(
         market_slice = market["sale"]
         rent_slice_label = ""
 
-    if below_market:
-        candidates = db.scalars(
-            select(Listing).where(*filters).order_by(Listing.first_seen_at.desc()).limit(2000)
-        ).all()
-        # Annotate then filter — uses OPEX-aware medians
+    needs_memory = bool(
+        below_market
+        or opex_mode
+        or price_min is not None
+        or price_max is not None
+        or sort in ("price_asc", "price_desc", "psm_asc", "psm_desc")
+    )
+    order = _sql_order(sort, period=period)
+
+    if needs_memory:
+        candidates = list(
+            db.scalars(
+                select(Listing).where(*filters).order_by(order).limit(2500)
+            ).all()
+        )
+        candidates = _apply_range_filters(
+            candidates,
+            price_min=price_min,
+            price_max=price_max,
+            area_min=None,  # already in SQL
+            area_max=None,
+        )
         signals_tmp = _annotate_listings(db, candidates, market)
-        kept = [x for x in candidates if signals_tmp.get(x.id, {}).get("below_market")]
         if opex_mode:
-            kept = [
-                x
-                for x in kept
-                if signals_tmp.get(x.id, {}).get("opex") == opex_mode
+            candidates = [
+                x for x in candidates if signals_tmp.get(x.id, {}).get("opex") == opex_mode
             ]
-        total = len(kept)
+        if below_market:
+            candidates = [
+                x for x in candidates if signals_tmp.get(x.id, {}).get("below_market")
+            ]
+        candidates = _sort_listings_in_memory(candidates, sort)
+        total = len(candidates)
         pages = max(1, (total + per_page - 1) // per_page)
         page = min(page, pages)
         offset = (page - 1) * per_page
-        listings = kept[offset : offset + per_page]
-        signals = {i.id: signals_tmp[i.id] for i in listings}
+        listings = candidates[offset : offset + per_page]
+        signals = {i.id: signals_tmp[i.id] for i in listings if i.id in signals_tmp}
+        # annotate page if somehow missing
+        missing = [x for x in listings if x.id not in signals]
+        if missing:
+            signals.update(_annotate_listings(db, missing, market))
     else:
-        order = Listing.first_seen_at.desc() if period else Listing.last_seen_at.desc()
-        candidates = db.scalars(
-            select(Listing).where(*filters).order_by(order).limit(2000 if opex_mode else per_page * page)
-        ).all()
-        if opex_mode:
-            candidates = [x for x in candidates if resolve_listing_opex(x) == opex_mode]
-            total = len(candidates)
-            pages = max(1, (total + per_page - 1) // per_page)
-            page = min(page, pages)
-            offset = (page - 1) * per_page
-            listings = candidates[offset : offset + per_page]
-        else:
-            total = db.scalar(select(func.count()).select_from(Listing).where(*filters)) or 0
-            pages = max(1, (total + per_page - 1) // per_page)
-            page = min(page, pages)
-            offset = (page - 1) * per_page
-            listings = db.scalars(
+        total = db.scalar(select(func.count()).select_from(Listing).where(*filters)) or 0
+        pages = max(1, (total + per_page - 1) // per_page)
+        page = min(page, pages)
+        offset = (page - 1) * per_page
+        listings = list(
+            db.scalars(
                 select(Listing).where(*filters).order_by(order).offset(offset).limit(per_page)
             ).all()
+        )
         signals = _annotate_listings(db, listings, market)
 
     segments = [
@@ -467,6 +619,22 @@ def dashboard(
         ).all()
     ]
 
+    list_params = {
+        "q": q or None,
+        "source": source or None,
+        "deal_type": deal_type,
+        "segment": segment or None,
+        "period": period or None,
+        "opex": opex_mode or None,
+        "below_market": below_market or None,
+        "sort": sort if sort != "newest" else None,
+        "price_min": price_min,
+        "price_max": price_max,
+        "area_min": area_min,
+        "area_max": area_max,
+    }
+    list_qs = urlencode({k: v for k, v in list_params.items() if v not in (None, "", 0)})
+
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -488,6 +656,12 @@ def dashboard(
             "period": period or "",
             "opex": opex_mode or "",
             "below_market": below_market,
+            "sort": sort,
+            "price_min": "" if price_min is None else price_min,
+            "price_max": "" if price_max is None else price_max,
+            "area_min": "" if area_min is None else area_min,
+            "area_max": "" if area_max is None else area_max,
+            "list_qs": list_qs,
             "segments": segments,
             "sources": sources,
             "market": market,
@@ -508,9 +682,22 @@ def create_watch(
     segment: str = Form(""),
     period: str = Form(""),
     below_market: int = Form(0),
+    price_min: str = Form(""),
+    price_max: str = Form(""),
     db: Session = Depends(get_db),
 ):
     name = (name or "").strip()[:120] or "Подборка"
+
+    def _f(raw: str) -> float | None:
+        raw = (raw or "").strip().replace(" ", "").replace(",", ".")
+        if not raw:
+            return None
+        try:
+            v = float(raw)
+            return v if math.isfinite(v) and v >= 0 else None
+        except ValueError:
+            return None
+
     watch = WatchFilter(
         name=name,
         q=(q or "").strip() or None,
@@ -519,6 +706,8 @@ def create_watch(
         segment=(segment or "").strip() or None,
         period=(period or "").strip() or None,
         below_market=bool(below_market),
+        price_min=_f(price_min),
+        price_max=_f(price_max),
     )
     db.add(watch)
     db.commit()
@@ -530,6 +719,10 @@ def create_watch(
         "period": watch.period or "",
         "below_market": "1" if watch.below_market else "0",
     }
+    if watch.price_min is not None:
+        params["price_min"] = str(watch.price_min)
+    if watch.price_max is not None:
+        params["price_max"] = str(watch.price_max)
     return RedirectResponse("/?" + urlencode(params), status_code=303)
 
 

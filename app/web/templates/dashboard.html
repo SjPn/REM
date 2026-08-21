@@ -85,6 +85,16 @@
       <option value="24h" {% if period == '24h' %}selected{% endif %}>За сутки</option>
       <option value="7d" {% if period == '7d' %}selected{% endif %}>За неделю</option>
     </select>
+    <select name="sort" aria-label="Сортировка">
+      <option value="newest" {% if sort == 'newest' %}selected{% endif %}>Сначала новые</option>
+      <option value="oldest" {% if sort == 'oldest' %}selected{% endif %}>Сначала старые</option>
+      <option value="price_asc" {% if sort == 'price_asc' %}selected{% endif %}>Цена ↑</option>
+      <option value="price_desc" {% if sort == 'price_desc' %}selected{% endif %}>Цена ↓</option>
+      <option value="area_asc" {% if sort == 'area_asc' %}selected{% endif %}>Площадь ↑</option>
+      <option value="area_desc" {% if sort == 'area_desc' %}selected{% endif %}>Площадь ↓</option>
+      <option value="psm_asc" {% if sort == 'psm_asc' %}selected{% endif %}>$/м² ↑</option>
+      <option value="psm_desc" {% if sort == 'psm_desc' %}selected{% endif %}>$/м² ↓</option>
+    </select>
     {% if deal_type == 'rent' %}
     <select name="opex" aria-label="OPEX в цене">
       <option value="" {% if not opex %}selected{% endif %}>OPEX: авто</option>
@@ -97,6 +107,16 @@
       <input type="checkbox" name="below_market" value="1" {% if below_market %}checked{% endif %} />
       Ниже рынка
     </label>
+    <div class="filter-range" title="Цена в USD (гривны пересчитываются)">
+      <input type="number" name="price_min" value="{{ price_min }}" min="0" step="1" placeholder="Цена от $" aria-label="Цена от, USD" />
+      <span class="muted">–</span>
+      <input type="number" name="price_max" value="{{ price_max }}" min="0" step="1" placeholder="до $" aria-label="Цена до, USD" />
+    </div>
+    <div class="filter-range">
+      <input type="number" name="area_min" value="{{ area_min }}" min="0" step="1" placeholder="м² от" aria-label="Площадь от" />
+      <span class="muted">–</span>
+      <input type="number" name="area_max" value="{{ area_max }}" min="0" step="1" placeholder="до м²" aria-label="Площадь до" />
+    </div>
     <button type="submit">Показать</button>
   </form>
 
@@ -105,7 +125,7 @@
     <span class="watch-label">Подборки:</span>
     {% for w in watches %}
       <span class="watch-item">
-        <a class="watch-chip" href="/?q={{ w.q or '' }}&source={{ w.source or '' }}&deal_type={{ w.deal_type or deal_type }}&segment={{ w.segment or '' }}&period={{ w.period or '' }}&below_market={{ 1 if w.below_market else 0 }}">{{ w.name }}</a>
+        <a class="watch-chip" href="/?q={{ w.q or '' }}&source={{ w.source or '' }}&deal_type={{ w.deal_type or deal_type }}&segment={{ w.segment or '' }}&period={{ w.period or '' }}&below_market={{ 1 if w.below_market else 0 }}{% if w.price_min %}&price_min={{ w.price_min }}{% endif %}{% if w.price_max %}&price_max={{ w.price_max }}{% endif %}">{{ w.name }}</a>
         <form method="post" action="/watches/{{ w.id }}/delete" style="display:inline;">
           <button class="ghost" type="submit" aria-label="Удалить">✕</button>
         </form>
@@ -120,6 +140,8 @@
         <input type="hidden" name="segment" value="{{ segment }}" />
         <input type="hidden" name="period" value="{{ period }}" />
         <input type="hidden" name="below_market" value="{{ below_market }}" />
+        <input type="hidden" name="price_min" value="{{ price_min }}" />
+        <input type="hidden" name="price_max" value="{{ price_max }}" />
         <input name="name" placeholder="Название…" required maxlength="120" />
         <button type="submit">OK</button>
       </form>
@@ -135,6 +157,8 @@
       <input type="hidden" name="segment" value="{{ segment }}" />
       <input type="hidden" name="period" value="{{ period }}" />
       <input type="hidden" name="below_market" value="{{ below_market }}" />
+      <input type="hidden" name="price_min" value="{{ price_min }}" />
+      <input type="hidden" name="price_max" value="{{ price_max }}" />
       <input name="name" placeholder="Название…" required maxlength="120" />
       <button type="submit">OK</button>
     </form>
@@ -196,11 +220,11 @@
 
       <nav class="pager">
         {% if page > 1 %}
-          <a href="?page={{ page - 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}&period={{ period }}{% if opex %}&opex={{ opex }}{% endif %}&below_market={{ below_market }}">← Назад</a>
+          <a href="?page={{ page - 1 }}&{{ list_qs }}">← Назад</a>
         {% else %}<span></span>{% endif %}
         <span>Страница {{ page }} из {{ pages }}</span>
         {% if page < pages %}
-          <a href="?page={{ page + 1 }}&q={{ q }}&source={{ source }}&deal_type={{ deal_type }}&segment={{ segment }}&period={{ period }}{% if opex %}&opex={{ opex }}{% endif %}&below_market={{ below_market }}">Дальше →</a>
+          <a href="?page={{ page + 1 }}&{{ list_qs }}">Дальше →</a>
         {% else %}<span></span>{% endif %}
       </nav>
     {% endif %}
