@@ -21,14 +21,12 @@ def test_parse_price_per_sqm():
 
 
 def test_parse_price_rejects_digit_soup():
-    # polluted card text with many IDs must not become inf
     blob = "вул. Тестова 1 " + " ".join(str(i) for i in range(100000, 100050)) + " грн"
     price, cur = parse_price(blob)
     assert price is None or price < 1_000_000_000
 
 
 def test_normalize_rent_price_that_is_actually_psm():
-    # 15 USD for 467 m² → ~0.03 $/m² — treat as $/m²
     norm = normalize_listing_price(
         price=15,
         currency="USD",
@@ -36,9 +34,37 @@ def test_normalize_rent_price_that_is_actually_psm():
         deal_type="rent",
         title="7 005 $/міс 15 $/м² Нижньоключова",
     )
+    # title has both total and psm → trust text total
+    assert not norm.reinterpreted_as_psm
+    assert norm.price == 7005
+    assert norm.price_per_sqm == 15
+
+
+def test_normalize_expands_bare_psm_without_total():
+    norm = normalize_listing_price(
+        price=15,
+        currency="USD",
+        area_sqm=467,
+        deal_type="rent",
+        title="Оренда 15 $/м²",
+    )
     assert norm.reinterpreted_as_psm
     assert norm.price == 15 * 467
     assert norm.price_per_sqm == 15
+
+
+def test_normalize_does_not_multiply_monthly_total():
+    # 31196 $/міс for 2166 m² ≈ 14 $/m² — already a total
+    norm = normalize_listing_price(
+        price=31196,
+        currency="USD",
+        area_sqm=2166,
+        deal_type="rent",
+        title="31 196 $/міс 14 $/м² Гетьмана",
+    )
+    assert not norm.reinterpreted_as_psm
+    assert norm.price == 31196
+    assert norm.price_per_sqm == 14
 
 
 def test_normalize_leaves_sane_total():

@@ -47,7 +47,8 @@ _EUR_PER_USD = 0.92
 
 # Outlier guards (USD / m²)
 _SALE_PSM_MIN, _SALE_PSM_MAX = 200.0, 50_000.0
-_RENT_PSM_MIN, _RENT_PSM_MAX = 3.0, 800.0
+# Kyiv commercial rent: >~$50/m²·мес is almost only prime retail; treat as outlier.
+_RENT_PSM_MIN, _RENT_PSM_MAX = 3.0, 50.0
 
 
 @dataclass

@@ -205,9 +205,12 @@
                 {% if sig.opex and sig.opex != 'unknown' %}
                   <span class="tag opex-{{ sig.opex }}">{{ ua_opex(sig.opex) }}</span>
                 {% endif %}
-                {% if sig.below_market %}
-                  <span class="tag below">ниже рынка {{ sig.discount_pct }}%</span>
-                {% endif %}
+              {% if sig.below_market %}
+                <span class="tag below">ниже рынка {{ sig.discount_pct }}%</span>
+              {% endif %}
+              {% if sig.price_suspicious %}
+                <span class="tag warn">подозрительная цена м²</span>
+              {% endif %}
                 {% if sig.portals and sig.portals > 1 %}
                   <span class="tag">{{ sig.portals }} сайта</span>
                 {% endif %}

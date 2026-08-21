@@ -207,15 +207,18 @@ def clean_junk() -> None:
 
 @app.command("fix-prices")
 def fix_prices() -> None:
-    """Repair listings where stored price is actually $/m² (implied PSM too low)."""
+    """Repair listings where stored price is actually $/m² (or was wrongly multiplied)."""
     from sqlalchemy import select
 
     from app.db.models import Listing
-    from app.domain.pricing import normalize_listing_price
+    from app.domain.market_stats import to_usd
+    from app.domain.pricing import normalize_listing_price, rent_psm_suspicious
+    from app.domain.signals import listing_psm_usd
 
     init_db()
     SessionLocal = get_session_factory()
-    fixed = 0
+    touched = 0
+    repaired_text = 0
     with SessionLocal() as db:
         for lst in db.scalars(select(Listing)):
             norm = normalize_listing_price(
@@ -227,23 +230,51 @@ def fix_prices() -> None:
                 title=lst.title,
                 description=lst.description,
             )
-            if not norm.reinterpreted_as_psm:
-                # still fill explicit psm from title when missing
-                if lst.price_per_sqm is None and norm.price_per_sqm is not None:
-                    lst.price_per_sqm = norm.price_per_sqm
-                    fixed += 1
-                continue
-            lst.price = norm.price
+            extra = dict(lst.raw_extra or {})
+            before = (lst.price, lst.currency, lst.price_per_sqm)
+
+            if norm.price is not None:
+                lst.price = norm.price
             if norm.currency:
                 lst.currency = norm.currency
-            lst.price_per_sqm = norm.price_per_sqm
-            extra = dict(lst.raw_extra or {})
-            extra["price_was_psm"] = True
-            extra["price_norm"] = norm.detail
-            lst.raw_extra = extra
-            fixed += 1
+            if norm.price_per_sqm is not None:
+                lst.price_per_sqm = norm.price_per_sqm
+
+            if norm.detail == "text_total_and_psm":
+                extra.pop("price_was_psm", None)
+                extra["price_norm"] = norm.detail
+                repaired_text += 1
+            elif norm.reinterpreted_as_psm:
+                extra["price_was_psm"] = True
+                extra["price_norm"] = norm.detail
+            elif extra.get("price_was_psm") and (lst.deal_type or "") == "rent":
+                psm = listing_psm_usd(lst.price, lst.currency, lst.area_sqm)
+                if psm is not None and psm > 50:
+                    # Bad expand of a monthly total — roll back using stored rate if sane
+                    rate = lst.price_per_sqm
+                    rate_usd = to_usd(float(rate), lst.currency) if rate is not None else None
+                    if rate is not None and rate_usd is not None and rate_usd <= 50 and lst.area_sqm:
+                        lst.price = round(float(rate) * float(lst.area_sqm), 2)
+                        extra["price_norm"] = "rollback_reexpand_sane_rate"
+                    else:
+                        extra.pop("price_was_psm", None)
+                        extra["price_norm"] = "clear_bad_expand"
+                        extra["price_suspicious"] = True
+
+            psm_now = listing_psm_usd(lst.price, lst.currency, lst.area_sqm)
+            if (lst.deal_type or "") == "rent" and (
+                norm.suspicious_psm or rent_psm_suspicious(psm_now)
+            ):
+                extra["price_suspicious"] = True
+            else:
+                extra.pop("price_suspicious", None)
+
+            after = (lst.price, lst.currency, lst.price_per_sqm)
+            if after != before or extra != (lst.raw_extra or {}):
+                lst.raw_extra = extra or None
+                touched += 1
         db.commit()
-    rprint({"fixed": fixed})
+    rprint({"touched": touched, "repaired_from_text": repaired_text})
 
 
 @app.command("backfill-opex")

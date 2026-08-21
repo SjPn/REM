@@ -390,6 +390,7 @@ def _annotate_listings(
             "cap_rate_pct": extra.get("cap_rate_pct"),
             "noi": extra.get("noi"),
             "opex": opex,
+            "price_suspicious": bool(extra.get("price_suspicious")),
         }
     return out
 

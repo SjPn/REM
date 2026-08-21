@@ -449,6 +449,8 @@ a.ov-card:hover {
 .tag.opex-unknown { background: rgba(228, 236, 239, 0.7); }
 .tag.seller-owner { background: #e8f0f8; border-color: #b7cce0; color: #1d4a6b; }
 .tag.seller-agency { background: #f3eee8; border-color: #d2c2ae; color: #6a4a28; }
+.tag.below { background: var(--deal-soft); border-color: #9dceb8; color: var(--accent-ink); }
+.tag.warn { background: var(--warn-soft); border-color: #e0c48a; color: var(--warn); }
 .filter-check {
   display: flex;
   align-items: center;
