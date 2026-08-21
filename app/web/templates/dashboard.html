@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set active_nav = deal_type %}
-{% block title %}{{ 'Продажа' if deal_type == 'sale' else 'Аренда' }} — EstateMonitor{% endblock %}
+{% block title %}{{ 'Продажа' if deal_type == 'sale' else 'Аренда' }} — REM{% endblock %}
 {% block content %}
   <p class="page-kicker">{{ 'Продажа' if deal_type == 'sale' else 'Аренда' }} · Киев</p>
   <h1 class="page-title">{{ 'Продажа' if deal_type == 'sale' else 'Аренда' }} коммерции</h1>

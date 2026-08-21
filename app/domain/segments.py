@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from app.domain.enums import PropertyType
 
-# Target product segments for EstateMonitor.
+# Target product segments for RealEstateMonitor (REM).
 TARGET_SEGMENTS = {
     "office",
     "retail",

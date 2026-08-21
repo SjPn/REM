@@ -12,7 +12,7 @@ from app.pipeline.reconcile import rescore_all_vanished
 from app.pipeline.runner import run_crawl
 from app.scrapers import SCRAPERS
 
-app = typer.Typer(help="EstateMonitor CLI")
+app = typer.Typer(help="RealEstateMonitor (REM) CLI")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set active_nav = "listings" %}
-{% block title %}Объект #{{ property.id }} — EstateMonitor{% endblock %}
+{% block title %}Объект #{{ property.id }} — REM{% endblock %}
 {% block content %}
   <p class="page-kicker">Объект #{{ property.id }}</p>
   <h1 class="page-title">{{ property.title or property.address_norm or 'Без названия' }}</h1>
