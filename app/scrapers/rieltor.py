@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
 import time
 from collections.abc import Iterator
@@ -43,9 +44,15 @@ class RieltorScraper:
 
     def crawl(self, max_pages: int | None = None) -> Iterator[RawListing]:
         pages = max_pages or self.settings.crawl_max_pages
-        for deal_type, bases in RIELTOR_SEARCH.items():
+        deal_items = list(RIELTOR_SEARCH.items())
+        if self.settings.crawl_human_mode:
+            random.shuffle(deal_items)
+        for deal_type, bases in deal_items:
             batch: list[RawListing] = []
-            for base_url in bases:
+            urls = list(bases)
+            if self.settings.crawl_human_mode:
+                random.shuffle(urls)
+            for base_url in urls:
                 for page in range(1, pages + 1):
                     url = base_url if page == 1 else f"{base_url}?page={page}"
                     logger.info("RIELTOR fetch %s", url)

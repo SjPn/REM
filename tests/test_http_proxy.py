@@ -23,6 +23,8 @@ def _settings(**kwargs):
         "http_proxy": None,
         "user_agent": "test-agent",
         "crawl_human_mode": False,
+        "crawl_warmup": False,
+        "crawl_host_min_interval_sec": 0.0,
         "crawl_delay_sec": 1.0,
         "crawl_delay_jitter_sec": 0.0,
         "crawl_block_backoff_sec": 8.0,
@@ -68,6 +70,13 @@ def test_browser_headers_have_sec_fetch():
     assert h["Referer"] == "https://lun.ua/x"
     assert h["Sec-Fetch-Site"] == "same-origin"
     assert "sec-ch-ua" in h
+
+
+def test_looks_like_block_page():
+    from app.scrapers.http_utils import looks_like_block_page
+
+    assert looks_like_block_page("<html>ok listing page</html>" * 50) is False
+    assert looks_like_block_page("<html>Just a moment... cf-browser-verification</html>") is True
 
 
 def test_human_delay_blocked_longer(monkeypatch):

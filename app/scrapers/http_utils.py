@@ -48,8 +48,35 @@ _UA_POOL = (
 # Module-level request counter for rare "coffee breaks" across scrapers in one process.
 _pace_state: dict[str, Any] = {
     "count": 0,
-    "next_break_at": random.randint(10, 18),
+    "next_break_at": random.randint(8, 15),
+    "host_last": {},  # host -> monotonic timestamp
+    "host_failures": {},  # host -> consecutive soft failures
+    "warmed": set(),  # hosts already warmed this process
 }
+
+_BLOCK_HTML_MARKERS = (
+    "cf-browser-verification",
+    "cf-challenge",
+    "just a moment",
+    "attention required",
+    "access denied",
+    "request blocked",
+    "captcha",
+    "cloudflare",
+    "проверка безопасности",
+    "доступ ограничен",
+)
+
+
+def looks_like_block_page(html: str | None) -> bool:
+    if not html:
+        return False
+    low = html[:8000].lower()
+    # Short challenge shells are a strong signal.
+    if len(html) < 2500 and any(m in low for m in _BLOCK_HTML_MARKERS):
+        return True
+    hits = sum(1 for m in _BLOCK_HTML_MARKERS if m in low)
+    return hits >= 2
 
 
 def pick_user_agent(fixed: str | None = None) -> str:
@@ -77,13 +104,19 @@ def _chrome_client_hints(ua: str) -> dict[str, str]:
 
 
 def browser_headers(ua: str, *, referer: str | None = None, same_site: bool = False) -> dict[str, str]:
+    # Slight language preference jitter — still UA-local.
+    langs = [
+        "uk-UA,uk;q=0.9,ru;q=0.8,en-US;q=0.7,en;q=0.6",
+        "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7,ru;q=0.5",
+        "uk,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    ]
     headers: dict[str, str] = {
         "User-Agent": ua,
         "Accept": (
             "text/html,application/xhtml+xml,application/xml;q=0.9,"
             "image/avif,image/webp,image/apng,*/*;q=0.8"
         ),
-        "Accept-Language": "uk-UA,uk;q=0.9,ru;q=0.8,en-US;q=0.7,en;q=0.6",
+        "Accept-Language": random.choice(langs),
         "Accept-Encoding": "gzip, deflate",
         "Cache-Control": "max-age=0",
         "Upgrade-Insecure-Requests": "1",
@@ -91,6 +124,8 @@ def browser_headers(ua: str, *, referer: str | None = None, same_site: bool = Fa
         "Sec-Fetch-Mode": "navigate",
         "Sec-Fetch-Site": "same-origin" if same_site else "none",
         "Sec-Fetch-User": "?1",
+        "DNT": "1",
+        "Connection": "keep-alive",
     }
     headers.update(_chrome_client_hints(ua))
     if referer:
@@ -167,6 +202,8 @@ class HttpClient:
         self.verify = settings.http_verify_ssl
         self.proxy = _normalize_proxy(settings.http_proxy)
         self.human_mode = bool(settings.crawl_human_mode)
+        self.warmup = bool(getattr(settings, "crawl_warmup", True))
+        self.host_min_interval = float(getattr(settings, "crawl_host_min_interval_sec", 2.8))
         self.user_agent = pick_user_agent(settings.user_agent)
         self._last_url: str | None = None
         self._client = self._build_client()
@@ -174,7 +211,7 @@ class HttpClient:
     def _build_client(self) -> httpx.Client:
         kwargs: dict[str, Any] = {
             "headers": browser_headers(self.user_agent),
-            "timeout": self.timeout,
+            "timeout": httpx.Timeout(self.timeout, connect=min(15.0, self.timeout)),
             "follow_redirects": True,
             "verify": self.verify,
         }
@@ -191,6 +228,9 @@ class HttpClient:
     def __exit__(self, *args: object) -> None:
         self.close()
 
+    def _host(self, url: str) -> str:
+        return urlsplit(url).netloc.lower()
+
     def _request_headers(self, url: str) -> dict[str, str]:
         referer = None
         same_site = False
@@ -201,49 +241,130 @@ class HttpClient:
                 referer = self._last_url
                 same_site = True
             elif cur_o:
-                # Jumping into a site: look like came from the portal home.
                 referer = cur_o + "/"
                 same_site = False
         return browser_headers(self.user_agent, referer=referer, same_site=same_site)
 
+    def _enforce_host_gap(self, url: str) -> None:
+        host = self._host(url)
+        if not host:
+            return
+        last = float(_pace_state["host_last"].get(host) or 0.0)
+        if last <= 0:
+            return
+        elapsed = time.monotonic() - last
+        need = self.host_min_interval
+        fails = int(_pace_state["host_failures"].get(host) or 0)
+        if fails:
+            need *= 1.0 + min(fails, 5) * 0.35
+        if elapsed < need:
+            time.sleep(need - elapsed + random.uniform(0.05, 0.4))
+
+    def _warmup_host(self, url: str) -> None:
+        if not (self.human_mode and self.warmup):
+            return
+        host = self._host(url)
+        origin = _origin(url)
+        if not host or not origin or host in _pace_state["warmed"]:
+            return
+        home = origin + "/"
+        if urlsplit(url).path in ("", "/"):
+            _pace_state["warmed"].add(host)
+            return
+        logger.info("crawl warmup %s", home)
+        try:
+            self._enforce_host_gap(home)
+            headers = browser_headers(self.user_agent)
+            resp = self._client.get(home, headers=headers)
+            _pace_state["host_last"][host] = time.monotonic()
+            self._last_url = str(resp.url)
+            if resp.status_code in (403, 429) or looks_like_block_page(resp.text):
+                _pace_state["host_failures"][host] = int(_pace_state["host_failures"].get(host) or 0) + 1
+                sleep_crawl_delay(blocked=True)
+            else:
+                # Short "read the homepage" pause.
+                time.sleep(random.uniform(1.2, 3.5))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("warmup failed %s: %s", home, exc)
+        finally:
+            _pace_state["warmed"].add(host)
+
     def _pace(self, url: str) -> None:
+        self._warmup_host(url)
         if not self.human_mode:
             sleep_crawl_delay()
+            self._enforce_host_gap(url)
             return
         _maybe_session_break()
-        # Slightly longer when switching host (new "tab").
         delay = human_delay_seconds()
         if self._last_url and _origin(self._last_url) != _origin(url):
-            delay *= random.uniform(1.15, 1.55)
+            delay *= random.uniform(1.25, 1.75)
+        host = self._host(url)
+        fails = int(_pace_state["host_failures"].get(host) or 0)
+        if fails:
+            delay *= 1.0 + min(fails, 4) * 0.4
         time.sleep(delay)
+        self._enforce_host_gap(url)
+
+    def _mark_host_ok(self, url: str) -> None:
+        host = self._host(url)
+        if host:
+            _pace_state["host_last"][host] = time.monotonic()
+            _pace_state["host_failures"][host] = 0
+
+    def _mark_host_fail(self, url: str) -> None:
+        host = self._host(url)
+        if host:
+            _pace_state["host_last"][host] = time.monotonic()
+            _pace_state["host_failures"][host] = int(_pace_state["host_failures"].get(host) or 0) + 1
+
+    def _rotate_identity(self) -> None:
+        self.user_agent = pick_user_agent(None)
+        self._client.headers.update(browser_headers(self.user_agent))
 
     def _raise_for_portal(self, resp: httpx.Response, url: str) -> None:
-        if resp.status_code in (403, 429):
-            # Rotate identity after a block — looks less like a stuck bot.
+        if resp.status_code in (403, 429, 503):
             if self.human_mode:
-                self.user_agent = pick_user_agent(None)
-                self._client.headers.update(browser_headers(self.user_agent))
+                self._rotate_identity()
+            self._mark_host_fail(url)
             sleep_crawl_delay(blocked=True)
             raise PortalBlockedError(resp.status_code, url)
         resp.raise_for_status()
 
+    def _check_html_block(self, html: str, url: str) -> None:
+        if looks_like_block_page(html):
+            if self.human_mode:
+                self._rotate_identity()
+            self._mark_host_fail(url)
+            sleep_crawl_delay(blocked=True)
+            raise PortalBlockedError(403, url)
+
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=2, max=30),
+        wait=wait_exponential(multiplier=2, min=3, max=45),
         retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
         reraise=True,
     )
     def get_text(self, url: str, params: dict[str, Any] | None = None) -> str:
         self._pace(url)
         headers = self._request_headers(url)
-        resp = self._client.get(url, params=params, headers=headers)
-        self._raise_for_portal(resp, url)
-        self._last_url = str(resp.url)
-        return resp.text
+        try:
+            resp = self._client.get(url, params=params, headers=headers)
+            self._raise_for_portal(resp, url)
+            text = resp.text
+            self._check_html_block(text, url)
+            self._mark_host_ok(url)
+            self._last_url = str(resp.url)
+            return text
+        except PortalBlockedError:
+            raise
+        except Exception:
+            self._mark_host_fail(url)
+            raise
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=2, max=30),
+        wait=wait_exponential(multiplier=2, min=3, max=45),
         retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
         reraise=True,
     )
@@ -253,10 +374,17 @@ class HttpClient:
         headers["Accept"] = "application/json, text/plain, */*"
         headers["Sec-Fetch-Dest"] = "empty"
         headers["Sec-Fetch-Mode"] = "cors"
-        resp = self._client.get(url, params=params, headers=headers)
-        self._raise_for_portal(resp, url)
-        self._last_url = str(resp.url)
-        return resp.json()
+        try:
+            resp = self._client.get(url, params=params, headers=headers)
+            self._raise_for_portal(resp, url)
+            self._mark_host_ok(url)
+            self._last_url = str(resp.url)
+            return resp.json()
+        except PortalBlockedError:
+            raise
+        except Exception:
+            self._mark_host_fail(url)
+            raise
 
 
 

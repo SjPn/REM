@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-import time
+import random
 from collections.abc import Iterator
 from typing import Protocol
 
@@ -28,9 +28,13 @@ def enrich_listings(
         yield from listings
         return
 
+    work = list(listings)
+    if settings.crawl_human_mode and len(work) > 1:
+        random.shuffle(work)
+
     limit = max_details if max_details is not None else settings.max_detail_pages
     enriched = 0
-    for item in listings:
+    for item in work:
         if enriched >= limit or (item.extra or {}).get("skip_detail"):
             yield item
             continue

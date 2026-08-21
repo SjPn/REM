@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import random
 import re
 import time
 from collections.abc import Iterator
@@ -43,7 +44,10 @@ class LunScraper:
 
     def crawl(self, max_pages: int | None = None) -> Iterator[RawListing]:
         pages = max_pages or self.settings.crawl_max_pages
-        for (deal_type, zone), base_url in LUN_SEARCH.items():
+        entries = list(LUN_SEARCH.items())
+        if self.settings.crawl_human_mode:
+            random.shuffle(entries)
+        for (deal_type, zone), base_url in entries:
             batch: list[RawListing] = []
             for page in range(1, pages + 1):
                 url = base_url if page == 1 else f"{base_url}?page={page}"

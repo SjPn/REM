@@ -16,15 +16,19 @@ class Settings(BaseSettings):
 
     database_url: str = f"sqlite:///{DATA_DIR / 'estatemonitor.db'}"
     # Human-like crawl pacing (seconds). Defaults are conservative to reduce bans.
-    crawl_delay_sec: float = 3.2
-    crawl_delay_jitter_sec: float = 1.8
-    crawl_block_backoff_sec: float = 45.0
+    crawl_delay_sec: float = 3.8
+    crawl_delay_jitter_sec: float = 2.2
+    crawl_block_backoff_sec: float = 60.0
     crawl_human_mode: bool = True
+    # Minimum gap between requests to the same host (extra to base delay).
+    crawl_host_min_interval_sec: float = 2.8
+    # Hit portal homepage once when first touching a host in the session.
+    crawl_warmup: bool = True
     # Every N requests take a longer "coffee" break (min/max inclusive range).
-    crawl_break_every_min: int = 10
-    crawl_break_every_max: int = 18
-    crawl_break_sec_min: float = 25.0
-    crawl_break_sec_max: float = 70.0
+    crawl_break_every_min: int = 8
+    crawl_break_every_max: int = 15
+    crawl_break_sec_min: float = 35.0
+    crawl_break_sec_max: float = 90.0
     crawl_max_pages: int = 5
     http_timeout_sec: float = 30.0
     http_verify_ssl: bool = False
