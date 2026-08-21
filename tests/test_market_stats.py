@@ -9,6 +9,7 @@ from app.domain.market_stats import (
     rough_yield_by_district,
     to_usd,
 )
+from app.domain.pricing import normalize_listing_price
 from app.web.routes import _days_on_market, _sort_listings_in_memory
 
 
@@ -22,8 +23,32 @@ def test_extract_district_from_text():
 
 
 def test_to_usd():
-    assert to_usd(4100, "UAH") == 100.0
+    # NBU-ish ~44.61 грн/$
+    assert abs(to_usd(4461, "UAH") - 100.0) < 0.05
     assert to_usd(100, "USD") == 100.0
+    assert abs(to_usd(100, "EUR") - 116.9) < 0.2
+
+
+def test_sale_psm_suspicious():
+    from app.domain.pricing import sale_psm_suspicious
+
+    assert sale_psm_suspicious(300) is True
+    assert sale_psm_suspicious(450) is False
+    assert sale_psm_suspicious(2500) is False
+    assert sale_psm_suspicious(12_000) is True
+
+
+def test_normalize_marks_cheap_sale_psm():
+    norm = normalize_listing_price(
+        price=30_000,
+        currency="USD",
+        area_sqm=200,
+        deal_type="sale",
+        title="Офис 30000$",
+    )
+    # 150 $/м² — ниже рыночного пола
+    assert not norm.reinterpreted_as_psm
+    assert norm.suspicious_psm
 
 
 def _empty_rent() -> MarketSlice:

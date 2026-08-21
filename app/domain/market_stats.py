@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db.models import Listing
 
 KYIV_DISTRICTS = [
@@ -41,14 +42,23 @@ def district_label_ru(name: str | None) -> str:
         return ""
     return KYIV_DISTRICT_RU.get(name, name)
 
-# Approximate FX for market averages (overridable via settings later)
-_UAH_PER_USD = 41.0
-_EUR_PER_USD = 0.92
-
-# Outlier guards (USD / m²)
-_SALE_PSM_MIN, _SALE_PSM_MAX = 200.0, 50_000.0
+# Outlier guards (USD / m²). Kyiv commercial sale: below ~$450 or above ~$10k is noise.
+_SALE_PSM_MIN, _SALE_PSM_MAX = 450.0, 10_000.0
 # Kyiv commercial rent: >~$50/m²·мес is almost only prime retail; treat as outlier.
 _RENT_PSM_MIN, _RENT_PSM_MAX = 3.0, 50.0
+
+
+def to_usd(price: float, currency: str | None) -> float | None:
+    cur = (currency or "USD").upper()
+    if cur == "USD":
+        return price
+    settings = get_settings()
+    if cur == "UAH":
+        rate = float(settings.uah_per_usd) or 44.61
+        return price / rate
+    if cur == "EUR":
+        return price * float(settings.usd_per_eur or 1.169)
+    return None
 
 
 @dataclass
@@ -115,17 +125,6 @@ def extract_district(*parts: str | None) -> str | None:
     if m:
         return normalize_district(m.group(1))
     return normalize_district(blob)
-
-
-def to_usd(price: float, currency: str | None) -> float | None:
-    cur = (currency or "USD").upper()
-    if cur == "USD":
-        return price
-    if cur == "UAH":
-        return price / _UAH_PER_USD
-    if cur == "EUR":
-        return price / _EUR_PER_USD
-    return None
 
 
 def _median(values: list[float]) -> float | None:

@@ -212,7 +212,7 @@ def fix_prices() -> None:
 
     from app.db.models import Listing
     from app.domain.market_stats import to_usd
-    from app.domain.pricing import normalize_listing_price, rent_psm_suspicious
+    from app.domain.pricing import normalize_listing_price, psm_suspicious
     from app.domain.signals import listing_psm_usd
 
     init_db()
@@ -262,9 +262,7 @@ def fix_prices() -> None:
                         extra["price_suspicious"] = True
 
             psm_now = listing_psm_usd(lst.price, lst.currency, lst.area_sqm)
-            if (lst.deal_type or "") == "rent" and (
-                norm.suspicious_psm or rent_psm_suspicious(psm_now)
-            ):
+            if psm_suspicious(lst.deal_type, psm_now) or norm.suspicious_psm:
                 extra["price_suspicious"] = True
             else:
                 extra.pop("price_suspicious", None)

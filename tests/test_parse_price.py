@@ -1,4 +1,4 @@
-from app.domain.pricing import normalize_listing_price
+from app.domain.pricing import normalize_listing_price, sale_psm_suspicious
 from app.scrapers.http_utils import is_kyiv_region_url, parse_price, parse_price_per_sqm
 
 
@@ -77,6 +77,32 @@ def test_normalize_leaves_sane_total():
     )
     assert not norm.reinterpreted_as_psm
     assert norm.price == 2500
+
+
+def test_sale_expands_clear_psm_rate():
+    norm = normalize_listing_price(
+        price=1800,
+        currency="USD",
+        area_sqm=120,
+        deal_type="sale",
+        title="Продаж офісу",
+    )
+    # 1800/120 = 15 $/м² → stored figure is the rate
+    assert norm.reinterpreted_as_psm
+    assert norm.price == 1800 * 120
+    assert not norm.suspicious_psm
+
+
+def test_sale_high_psm_suspicious():
+    norm = normalize_listing_price(
+        price=2_500_000,
+        currency="USD",
+        area_sqm=100,
+        deal_type="sale",
+        title="Офіс 2.5 млн",
+    )
+    assert norm.suspicious_psm
+    assert sale_psm_suspicious(25_000)
 
 
 def test_kyiv_url_filter():

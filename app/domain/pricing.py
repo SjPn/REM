@@ -11,8 +11,11 @@ from app.domain.market_stats import to_usd
 # Rent $/m²·мес: below floor → likely the "price" is already a rate; above ceiling → outlier.
 _RENT_PSM_FLOOR_USD = 3.0
 _RENT_PSM_CEILING_USD = 50.0
-# Sale: below this implied $/m² the stored figure is almost certainly already $/m².
-_SALE_PSM_FLOOR_USD = 50.0
+# Sale: expand only when implied $/m² is absurdly low (price field is clearly a rate).
+_SALE_PSM_FLOOR_USD = 80.0
+# Plausible Kyiv commercial sale band ($/м²). Keep in sync with market_stats._SALE_PSM_*.
+_SALE_PSM_MIN_USD = 450.0
+_SALE_PSM_MAX_USD = 10_000.0
 
 _EXPLICIT_PSM_RE = re.compile(
     r"(\d{1,3}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*"
@@ -66,6 +69,21 @@ def rent_psm_suspicious(psm_usd: float | None) -> bool:
     return psm_usd > _RENT_PSM_CEILING_USD
 
 
+def sale_psm_suspicious(psm_usd: float | None) -> bool:
+    """Commercial sale: <~$450/м² or >~$10k/м² is almost certainly a bad parse."""
+    if psm_usd is None or not math.isfinite(psm_usd):
+        return False
+    return psm_usd < _SALE_PSM_MIN_USD or psm_usd > _SALE_PSM_MAX_USD
+
+
+def psm_suspicious(deal_type: str | None, psm_usd: float | None) -> bool:
+    if (deal_type or "").lower() == "rent":
+        return rent_psm_suspicious(psm_usd)
+    if (deal_type or "").lower() == "sale":
+        return sale_psm_suspicious(psm_usd)
+    return False
+
+
 def normalize_listing_price(
     *,
     price: float | None,
@@ -113,7 +131,9 @@ def normalize_listing_price(
             parsed_cur or currency or cur,
             float(parsed_psm),
             False,
-            suspicious_psm=is_rent and rent_psm_suspicious(psm_usd),
+            suspicious_psm=psm_suspicious(
+                deal_type, (total_usd / float(area_sqm)) if total_usd and area_sqm else None
+            ),
             detail="text_total_and_psm",
         )
 
@@ -136,7 +156,7 @@ def normalize_listing_price(
 
     implied = usd / a
     floor = psm_floor_usd(deal_type)
-    suspicious = is_rent and rent_psm_suspicious(implied)
+    suspicious = psm_suspicious(deal_type, implied)
 
     # Explicit N $/м² equals stored price, and implied total/area is nonsense-low
     if (
@@ -160,6 +180,9 @@ def normalize_listing_price(
         if is_rent and usd > _RENT_PSM_CEILING_USD:
             # e.g. 31 196 mistaken as rate — do not multiply by area
             rate_ok = False
+        if not is_rent and (usd < _SALE_PSM_MIN_USD or usd > _SALE_PSM_MAX_USD):
+            # Stored "price" as putative $/м² must itself look like a sale rate
+            rate_ok = False
         if rate_ok:
             total = round(p * a, 2)
             return PriceNorm(
@@ -176,7 +199,7 @@ def normalize_listing_price(
             psm_field or explicit,
             False,
             True,
-            "skip_expand_rate_above_rent_ceiling",
+            "skip_expand_implausible_rate",
         )
 
     if psm_field is None and explicit is not None:

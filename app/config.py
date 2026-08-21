@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     backfill_max_pages: int = 15
     backfill_max_details: int = 200
 
+    # FX for UAH/EUR → USD (NBU-ish; update periodically). 2026-08-21: 44.61 грн/$, 52.13 грн/€.
+    uah_per_usd: float = 44.61
+    usd_per_eur: float = 1.169  # ≈ 52.13 / 44.61
+
     # Deal scoring thresholds
     deal_likely_min: int = 70
     deal_ambiguous_min: int = 40
