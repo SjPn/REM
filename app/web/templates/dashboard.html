@@ -54,13 +54,13 @@
     </div>
     <div class="district-chips">
       {% for row in mode_rows[:6] %}
-      <div class="d-chip" title="{{ row.stress_detail }}">
+      <a class="d-chip" href="/?deal_type={{ deal_type }}&district={{ row.district }}{% if opex %}&opex={{ opex }}{% endif %}" title="{{ row.stress_detail }}">
         <span class="d-name">{{ district_ru(row.district) }}</span>
         <span class="d-meta">
           <strong>{% if row.avg_psm is not none %}{{ '%.0f'|format(row.avg_psm) if deal_type == 'sale' else '%.1f'|format(row.avg_psm) }}{% else %}—{% endif %}</strong>
           <span class="muted">· {{ row.active }}</span>
         </span>
-      </div>
+      </a>
       {% endfor %}
     </div>
   </section>
@@ -94,6 +94,14 @@
           {% endfor %}
         </select>
 
+        <label class="f-label" for="f-district">Район</label>
+        <select id="f-district" name="district">
+          <option value="">Все районы</option>
+          {% for d in districts %}
+            <option value="{{ d }}" {% if district == d %}selected{% endif %}>{{ district_ru(d) }}</option>
+          {% endfor %}
+        </select>
+
         <label class="f-label" for="f-period">Когда появились</label>
         <select id="f-period" name="period">
           <option value="">Любая дата</option>
@@ -111,6 +119,8 @@
           <option value="area_desc" {% if sort == 'area_desc' %}selected{% endif %}>Площадь ↓</option>
           <option value="psm_asc" {% if sort == 'psm_asc' %}selected{% endif %}>$/м² ↑</option>
           <option value="psm_desc" {% if sort == 'psm_desc' %}selected{% endif %}>$/м² ↓</option>
+          <option value="dom_desc" {% if sort == 'dom_desc' %}selected{% endif %}>Дольше в сети</option>
+          <option value="dom_asc" {% if sort == 'dom_asc' %}selected{% endif %}>Короче в сети</option>
         </select>
 
         {% if deal_type == 'rent' %}
@@ -211,9 +221,14 @@
               {% if sig.price_suspicious %}
                 <span class="tag warn">подозрительная цена м²</span>
               {% endif %}
-                {% if sig.portals and sig.portals > 1 %}
-                  <span class="tag">{{ sig.portals }} сайта</span>
-                {% endif %}
+              {% if sig.portals and sig.portals > 1 %}
+                <span class="tag multi" title="{% if sig.portal_sources %}{{ sig.portal_sources|join(', ') }}{% endif %}">
+                  {{ sig.portals }} сайта{% if sig.portal_spread_pct is not none %} · Δ {{ sig.portal_spread_pct }}%{% endif %}
+                </span>
+              {% endif %}
+              {% if sig.dom_days is not none %}
+                <span class="tag muted-tag" title="Сколько дней объявление в нашей базе">{{ sig.dom_days }} дн. в сети</span>
+              {% endif %}
                 {% if sig.cap_rate_pct %}<span class="tag">доходность {{ sig.cap_rate_pct }}%</span>{% endif %}
               </div>
               <div class="listing-addr">
@@ -228,9 +243,12 @@
               <div class="area">
                 {% if x.area_sqm %}{{ x.area_sqm }} м²{% else %}<span class="warn-text">площадь ?</span>{% endif %}
               </div>
+              {% if sig.dom_days is not none %}
+                <div class="dom">{{ sig.dom_days }} дн.</div>
+              {% endif %}
               <div class="listing-links">
                 <a href="{{ x.url }}" target="_blank" rel="noopener noreferrer">сайт ↗</a>
-                {% if x.property_id %}<a href="/properties/{{ x.property_id }}">в REM</a>{% endif %}
+                {% if x.property_id %}<a href="/properties/{{ x.property_id }}">в REM{% if sig.portals and sig.portals > 1 %} · дубли{% endif %}</a>{% endif %}
               </div>
             </div>
           </article>

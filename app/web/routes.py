@@ -21,6 +21,7 @@ from app.domain.market_stats import (
     count_active_inventory,
     district_label_ru,
     pick_rent_market_slice,
+    rough_yield_by_district,
     to_usd,
 )
 from app.domain.seller_stress import compute_seller_stress
@@ -49,8 +50,19 @@ _SORT_VALUES = frozenset(
         "area_desc",
         "psm_asc",
         "psm_desc",
+        "dom_asc",
+        "dom_desc",
     }
 )
+
+
+def _days_on_market(first_seen_at: datetime | None) -> int | None:
+    if first_seen_at is None:
+        return None
+    fs = first_seen_at
+    if fs.tzinfo is None:
+        fs = fs.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - fs).days)
 
 
 def _parse_optional_float(value: float | None) -> float | None:
@@ -115,12 +127,18 @@ def _sort_listings_in_memory(rows: list[Listing], sort: str) -> list[Listing]:
         ts = x.first_seen_at if sort in ("newest", "oldest") else x.last_seen_at
         return ts or datetime.min.replace(tzinfo=timezone.utc)
 
+    def key_dom(x: Listing):
+        d = _days_on_market(x.first_seen_at)
+        return (d is None, d if d is not None else 0)
+
     if sort in ("price_asc", "price_desc"):
         rows = sorted(rows, key=key_price, reverse=reverse)
     elif sort in ("area_asc", "area_desc"):
         rows = sorted(rows, key=key_area, reverse=reverse)
     elif sort in ("psm_asc", "psm_desc"):
         rows = sorted(rows, key=key_psm, reverse=reverse)
+    elif sort in ("dom_asc", "dom_desc"):
+        rows = sorted(rows, key=key_dom, reverse=reverse)
     elif sort == "oldest":
         rows = sorted(rows, key=key_seen, reverse=False)
     elif sort == "newest":
@@ -329,6 +347,54 @@ def _portal_counts(db: Session, property_ids: list[int]) -> dict[int, int]:
     return {int(pid): int(n) for pid, n in rows if pid is not None}
 
 
+def _portal_spreads(db: Session, property_ids: list[int]) -> dict[int, dict]:
+    """For multi-portal properties: count, sources, USD price min/max and spread %."""
+    if not property_ids:
+        return {}
+    peers = db.scalars(
+        select(Listing).where(
+            Listing.property_id.in_(property_ids),
+            Listing.status.in_(["active", "relisted"]),
+            Listing.price.is_not(None),
+        )
+    ).all()
+    by_pid: dict[int, list[Listing]] = {}
+    for lst in peers:
+        if lst.property_id is None:
+            continue
+        by_pid.setdefault(int(lst.property_id), []).append(lst)
+
+    out: dict[int, dict] = {}
+    for pid, items in by_pid.items():
+        if len(items) < 2:
+            continue
+        usd_vals: list[float] = []
+        sources: list[str] = []
+        for lst in items:
+            usd = to_usd(float(lst.price), lst.currency) if lst.price is not None else None
+            if usd is not None and math.isfinite(usd) and usd > 0:
+                usd_vals.append(usd)
+            if lst.source and lst.source not in sources:
+                sources.append(lst.source)
+        if len(usd_vals) < 2:
+            out[pid] = {
+                "count": len(items),
+                "sources": sources,
+                "spread_pct": None,
+            }
+            continue
+        lo, hi = min(usd_vals), max(usd_vals)
+        spread = round((hi - lo) / lo * 100.0, 1) if lo > 0 else None
+        out[pid] = {
+            "count": len(items),
+            "sources": sources,
+            "price_min_usd": round(lo, 0),
+            "price_max_usd": round(hi, 0),
+            "spread_pct": spread,
+        }
+    return out
+
+
 def _annotate_listings(
     db: Session,
     listings: list[Listing],
@@ -343,9 +409,9 @@ def _annotate_listings(
     }
     rent_all_med = {d.district: d.median_psm for d in market["rent"].districts}
     phones = _phone_freq(db)
-    portals = _portal_counts(
-        db, [x.property_id for x in listings if x.property_id is not None]
-    )
+    pids = [x.property_id for x in listings if x.property_id is not None]
+    portals = _portal_counts(db, pids)
+    spreads = _portal_spreads(db, pids)
     out: dict[int, dict] = {}
     for x in listings:
         opex = resolve_listing_opex(x) if x.deal_type == "rent" else None
@@ -382,15 +448,19 @@ def _annotate_listings(
             phone_listing_count=phones.get(digits, 1) if digits else 1,
         )
         extra = x.raw_extra or {}
+        spread = spreads.get(x.property_id) if x.property_id else None
         out[x.id] = {
             "below_market": hint.below_market,
             "discount_pct": hint.discount_pct,
             "seller": seller,
             "portals": portals.get(x.property_id, 1) if x.property_id else 1,
+            "portal_spread_pct": spread.get("spread_pct") if spread else None,
+            "portal_sources": spread.get("sources") if spread else None,
             "cap_rate_pct": extra.get("cap_rate_pct"),
             "noi": extra.get("noi"),
             "opex": opex,
             "price_suspicious": bool(extra.get("price_suspicious")),
+            "dom_days": _days_on_market(x.first_seen_at),
         }
     return out
 
@@ -469,6 +539,7 @@ def dashboard(
     segment: str | None = None,
     q: str | None = None,
     period: str | None = None,
+    district: str | None = None,
     opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
     below_market: int = Query(0, ge=0, le=1),
     sort: str = Query("newest"),
@@ -505,6 +576,15 @@ def dashboard(
         filters.append(Listing.source == source)
     if segment:
         filters.append(Listing.property_type == segment)
+    if district and district in KYIV_DISTRICTS:
+        ru = district_label_ru(district)
+        filters.append(
+            or_(
+                Listing.district == district,
+                Listing.district.ilike(f"%{district}%"),
+                Listing.district.ilike(f"%{ru}%") if ru else Listing.district == district,
+            )
+        )
     since = _period_since(period)
     if since is not None:
         filters.append(Listing.first_seen_at >= since)
@@ -551,7 +631,7 @@ def dashboard(
         or opex_mode
         or price_min is not None
         or price_max is not None
-        or sort in ("price_asc", "price_desc", "psm_asc", "psm_desc")
+        or sort in ("price_asc", "price_desc", "psm_asc", "psm_desc", "dom_asc", "dom_desc")
     )
     order = _sql_order(sort, period=period)
 
@@ -626,6 +706,7 @@ def dashboard(
         "deal_type": deal_type,
         "segment": segment or None,
         "period": period or None,
+        "district": district if district in KYIV_DISTRICTS else None,
         "opex": opex_mode or None,
         "below_market": below_market or None,
         "sort": sort if sort != "newest" else None,
@@ -655,6 +736,7 @@ def dashboard(
             "segment": segment or "",
             "q": q or "",
             "period": period or "",
+            "district": district if district in KYIV_DISTRICTS else "",
             "opex": opex_mode or "",
             "below_market": below_market,
             "sort": sort,
@@ -665,6 +747,7 @@ def dashboard(
             "list_qs": list_qs,
             "segments": segments,
             "sources": sources,
+            "districts": KYIV_DISTRICTS,
             "market": market,
             "market_slice": market_slice,
             "rent_slice_label": rent_slice_label,
@@ -767,6 +850,8 @@ def market_page(
         rent_slice_label = ""
     compare_rows = _district_rows(market, with_median=True)
     compare_by = {r["district"]: r for r in compare_rows}
+    yields = rough_yield_by_district(market)
+    yield_by = {r["district"]: r for r in yields["rows"]}
     return templates.TemplateResponse(
         request,
         "market.html",
@@ -779,6 +864,8 @@ def market_page(
             "inventory": inventory,
             "mode_rows": mode_rows,
             "compare_by": compare_by,
+            "yields": yields,
+            "yield_by": yield_by,
         },
     )
 
@@ -903,6 +990,12 @@ def property_page(property_id: int, request: Request, db: Session = Depends(get_
     ).all()
     market = compute_all_market_stats(db)
     signals = _annotate_listings(db, list(listings), market)
+    spreads = _portal_spreads(db, [property_id])
+    portal_compare = spreads.get(property_id) or {
+        "count": len(listings),
+        "sources": list({x.source for x in listings if x.source}),
+        "spread_pct": None,
+    }
     return templates.TemplateResponse(
         request,
         "property.html",
@@ -912,5 +1005,6 @@ def property_page(property_id: int, request: Request, db: Session = Depends(get_
             "events": events,
             "hyps": hyps,
             "signals": signals,
+            "portal_compare": portal_compare,
         },
     )

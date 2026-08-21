@@ -373,6 +373,13 @@ a.ov-card:hover {
   background: var(--surface-2);
   border: 1px solid var(--line);
   font-size: 0.88rem;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+a.d-chip:hover {
+  border-color: var(--line-strong);
+  background: var(--surface);
 }
 .d-name { font-weight: 650; }
 .d-meta { white-space: nowrap; }
@@ -449,8 +456,14 @@ a.ov-card:hover {
 .tag.opex-unknown { background: rgba(228, 236, 239, 0.7); }
 .tag.seller-owner { background: #e8f0f8; border-color: #b7cce0; color: #1d4a6b; }
 .tag.seller-agency { background: #f3eee8; border-color: #d2c2ae; color: #6a4a28; }
-.tag.below { background: var(--deal-soft); border-color: #9dceb8; color: var(--accent-ink); }
-.tag.warn { background: var(--warn-soft); border-color: #e0c48a; color: var(--warn); }
+.tag.multi { background: #e8f0f8; border-color: #b7cce0; color: #1d4a6b; }
+.tag.muted-tag { background: rgba(228, 236, 239, 0.7); color: var(--muted); }
+.dom {
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
 .filter-check {
   display: flex;
   align-items: center;

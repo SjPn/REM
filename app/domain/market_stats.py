@@ -289,3 +289,50 @@ def count_active_inventory(db: Session) -> dict:
         "rent_no_district": rent_no_district,
         "districts": districts,
     }
+
+
+def rough_yield_by_district(market: dict) -> dict:
+    """
+    Gross yield proxy: (median rent $/m²·мес × 12) / (median sale $/m²) × 100.
+    No OPEX/vacancy — labelled as rough in UI.
+    """
+    sale_by = {d.district: d for d in market["sale"].districts}
+    rent_slice = pick_rent_market_slice(market)
+    rent_by = {d.district: d for d in rent_slice.districts}
+    rows: list[dict] = []
+    for name in KYIV_DISTRICTS:
+        s = sale_by.get(name)
+        r = rent_by.get(name)
+        if not s or not r:
+            continue
+        if not s.median_psm or not r.median_psm or s.median_psm <= 0:
+            continue
+        yield_pct = round((r.median_psm * 12.0) / s.median_psm * 100.0, 1)
+        payback = round(100.0 / yield_pct, 1) if yield_pct > 0 else None
+        rows.append(
+            {
+                "district": name,
+                "sale_median_psm": s.median_psm,
+                "rent_median_psm": r.median_psm,
+                "sale_n": s.count,
+                "rent_n": r.count,
+                "yield_pct": yield_pct,
+                "payback_years": payback,
+            }
+        )
+    rows.sort(key=lambda x: (-x["yield_pct"], x["district"]))
+
+    city_sale = market["sale"].city_median_psm
+    city_rent = rent_slice.city_median_psm
+    city_yield = None
+    city_payback = None
+    if city_sale and city_rent and city_sale > 0:
+        city_yield = round((city_rent * 12.0) / city_sale * 100.0, 1)
+        city_payback = round(100.0 / city_yield, 1) if city_yield > 0 else None
+
+    return {
+        "rows": rows,
+        "city_yield_pct": city_yield,
+        "city_payback_years": city_payback,
+        "note": "Грубо: аренда×12 / цена продажи по медиане $/м². Без OPEX, простоя и налогов.",
+    }

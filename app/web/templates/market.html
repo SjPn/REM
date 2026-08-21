@@ -41,14 +41,56 @@
       <div class="ov-l">Сейчас в сети</div>
     </div>
     <div class="ov-card">
-      <div class="ov-n">{{ inventory.sale_no_district if mode == 'sale' else inventory.rent_no_district }}</div>
-      <div class="ov-l">Без района</div>
+      <div class="ov-n">
+        {% if yields.city_yield_pct is not none %}{{ '%.1f'|format(yields.city_yield_pct) }}%{% else %}—{% endif %}
+      </div>
+      <div class="ov-l">Грубая доходность</div>
+      <div class="ov-sub">
+        {% if yields.city_payback_years is not none %}~{{ '%.1f'|format(yields.city_payback_years) }} лет окуп.{% else %}аренда×12 / продажа{% endif %}
+      </div>
     </div>
   </section>
 
   <section class="section">
     <div class="section-head">
-      <h2>По районам</h2>
+      <h2>Грубая доходность по районам</h2>
+      <span class="muted">{{ yields.note }}</span>
+    </div>
+    {% if not yields.rows %}
+      <p class="empty">Мало пар sale+rent по районам для оценки.</p>
+    {% else %}
+      <div class="table-wrap">
+        <table class="market-table">
+          <thead>
+            <tr>
+              <th>Район</th>
+              <th>Продажа $/м²</th>
+              <th>Аренда $/м²·мес</th>
+              <th title="(аренда×12)/продажа">Доходность</th>
+              <th>Окупаемость</th>
+              <th class="muted">Выборка</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in yields.rows %}
+            <tr>
+              <td><strong>{{ district_ru(row.district) }}</strong></td>
+              <td class="num">{{ '%.0f'|format(row.sale_median_psm) }}</td>
+              <td class="num">{{ '%.1f'|format(row.rent_median_psm) }}</td>
+              <td class="num"><strong>{{ '%.1f'|format(row.yield_pct) }}%</strong></td>
+              <td class="num">{% if row.payback_years is not none %}~{{ '%.1f'|format(row.payback_years) }} лет{% else %}—{% endif %}</td>
+              <td class="muted">{{ row.sale_n }}/{{ row.rent_n }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>По районам · {{ 'продажа' if mode == 'sale' else 'аренда' }}</h2>
       <span class="muted" title="Индекс снятий: как часто снимают, возвращают и уценивают за неделю. Не число сделок.">индекс снятий · подсказка при наведении</span>
     </div>
     {% if not mode_rows %}
@@ -96,17 +138,20 @@
             <th>Аренда</th>
             <th>Продажа $/м²</th>
             <th>Аренда $/м²·мес</th>
+            <th title="Грубо: аренда×12 / продажа">Доходн.</th>
           </tr>
         </thead>
         <tbody>
           {% for row in inventory.districts %}
           {% set price = compare_by.get(row.district) %}
+          {% set yrow = yield_by.get(row.district) %}
           <tr>
             <td><strong>{{ district_ru(row.district) }}</strong></td>
             <td class="num">{{ row.sale }}</td>
             <td class="num">{{ row.rent }}</td>
             <td class="num">{% if price and price.sale_avg is not none %}{{ '%.0f'|format(price.sale_avg) }}{% else %}—{% endif %}</td>
             <td class="num">{% if price and price.rent_avg is not none %}{{ '%.1f'|format(price.rent_avg) }}{% else %}—{% endif %}</td>
+            <td class="num">{% if yrow %}{{ '%.1f'|format(yrow.yield_pct) }}%{% else %}—{% endif %}</td>
           </tr>
           {% endfor %}
           <tr>
@@ -114,6 +159,7 @@
             <td class="num"><strong>{{ inventory.sale_total }}</strong></td>
             <td class="num"><strong>{{ inventory.rent_total }}</strong></td>
             <td class="muted" colspan="2">вкл. без района</td>
+            <td class="num">{% if yields.city_yield_pct is not none %}<strong>{{ '%.1f'|format(yields.city_yield_pct) }}%</strong>{% else %}—{% endif %}</td>
           </tr>
         </tbody>
       </table>

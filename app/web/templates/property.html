@@ -14,6 +14,16 @@
 
   <section class="section">
     <div class="section-head"><h2>Объявления на порталах</h2></div>
+    {% if portal_compare and portal_compare.count > 1 %}
+      <p class="page-lead" style="margin-bottom:0.85rem;">
+        Одно помещение на <strong>{{ portal_compare.count }}</strong> сайтах
+        ({{ portal_compare.sources|join(', ') }})
+        {% if portal_compare.spread_pct is not none %}
+          · разница цен <strong>{{ '%.1f'|format(portal_compare.spread_pct) }}%</strong>
+          ({{ '%.0f'|format(portal_compare.price_min_usd) }}–{{ '%.0f'|format(portal_compare.price_max_usd) }} $)
+        {% endif %}
+      </p>
+    {% endif %}
     <div class="listing-list">
       {% for x in listings %}
       <article class="listing">
@@ -28,7 +38,8 @@
             {% set sig = signals.get(x.id, {}) if signals is defined else {} %}
             {% if sig.seller %}<span class="tag seller-{{ sig.seller }}">{{ ua_seller(sig.seller) }}</span>{% endif %}
             {% if sig.below_market %}<span class="tag below">ниже рынка на {{ sig.discount_pct }}%</span>{% endif %}
-            {% if sig.opex %}<span class="tag opex-{{ sig.opex }}">{{ ua_opex(sig.opex) }}</span>{% endif %}
+            {% if sig.opex and sig.opex != 'unknown' %}<span class="tag opex-{{ sig.opex }}">{{ ua_opex(sig.opex) }}</span>{% endif %}
+            {% if sig.dom_days is not none %}<span class="tag muted-tag">{{ sig.dom_days }} дн. в сети</span>{% endif %}
             {% if sig.cap_rate_pct %}<span class="tag">доходность {{ sig.cap_rate_pct }}%</span>{% endif %}
           </div>
           <div class="listing-addr">{{ x.address_raw or '—' }}</div>
