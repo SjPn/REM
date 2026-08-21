@@ -164,11 +164,19 @@ def is_kyiv_region_url(url: str) -> bool:
     return any(x in low for x in kyiv_markers)
 
 
+def _normalize_proxy(url: str | None) -> str | None:
+    if url is None:
+        return None
+    cleaned = url.strip()
+    return cleaned or None
+
+
 class HttpClient:
     def __init__(self) -> None:
         settings = get_settings()
         self.timeout = settings.http_timeout_sec
         self.verify = settings.http_verify_ssl
+        self.proxy = _normalize_proxy(settings.http_proxy)
         self.headers = {
             "User-Agent": settings.user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -176,12 +184,15 @@ class HttpClient:
         }
 
     def _client(self, **extra_headers: str) -> httpx.Client:
-        return httpx.Client(
-            headers={**self.headers, **extra_headers},
-            timeout=self.timeout,
-            follow_redirects=True,
-            verify=self.verify,
-        )
+        kwargs: dict[str, Any] = {
+            "headers": {**self.headers, **extra_headers},
+            "timeout": self.timeout,
+            "follow_redirects": True,
+            "verify": self.verify,
+        }
+        if self.proxy:
+            kwargs["proxy"] = self.proxy
+        return httpx.Client(**kwargs)
 
     def _raise_for_portal(self, resp: httpx.Response, url: str) -> None:
         if resp.status_code in (403, 429):

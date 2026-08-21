@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     crawl_max_pages: int = 5
     http_timeout_sec: float = 30.0
     http_verify_ssl: bool = False
+    # Residential / datacenter proxy for crawl (http://user:pass@host:port or socks5://...)
+    # Empty = direct connection. Secret — set only in Coolify / local .env, never commit.
+    http_proxy: str | None = None
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
