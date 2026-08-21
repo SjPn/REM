@@ -66,6 +66,7 @@ def test_sleep_crawl_delay_runs(monkeypatch):
         called["sec"] = sec
 
     monkeypatch.setattr("app.scrapers.http_utils.time.sleep", fake_sleep)
+    monkeypatch.setattr("app.scrapers.http_utils.random.uniform", lambda a, b: 0.0)
     monkeypatch.setattr(
         "app.scrapers.http_utils.get_settings",
         lambda: type(
@@ -79,6 +80,6 @@ def test_sleep_crawl_delay_runs(monkeypatch):
         )(),
     )
     sleep_crawl_delay()
-    assert called["sec"] >= 0.2
+    assert called["sec"] == 1.0
     sleep_crawl_delay(blocked=True)
-    assert called["sec"] >= 7.0
+    assert called["sec"] == 8.0
