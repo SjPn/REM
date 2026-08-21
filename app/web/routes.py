@@ -20,6 +20,7 @@ from app.domain.market_stats import (
     compute_all_market_stats,
     count_active_inventory,
     district_label_ru,
+    normalize_district,
     pick_rent_market_slice,
     rough_yield_by_district,
     to_usd,
@@ -552,6 +553,12 @@ def dashboard(
 ):
     if sort not in _SORT_VALUES:
         sort = "newest"
+    if district:
+        district = normalize_district(district) or (
+            district if district in KYIV_DISTRICTS else None
+        )
+        if district not in KYIV_DISTRICTS:
+            district = None
     price_min = _parse_optional_float(price_min)
     price_max = _parse_optional_float(price_max)
     area_min = _parse_optional_float(area_min)

@@ -487,6 +487,10 @@ a.d-chip:hover {
 .filter-side {
   position: sticky;
   top: 4.6rem;
+  max-height: calc(100vh - 5.2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 0.25rem;
 }
 .filters-side {
   display: flex;
@@ -550,12 +554,16 @@ a.d-chip:hover {
   justify-content: flex-start;
 }
 .filters-side .btn-apply {
-  margin-top: 0.55rem;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: 0.65rem;
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
   font-weight: 700;
   cursor: pointer;
+  box-shadow: 0 -0.6rem 0.8rem var(--surface);
 }
 .filters-side .btn-apply:hover { filter: brightness(1.05); }
 .side-watches {
