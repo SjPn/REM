@@ -1,12 +1,17 @@
 ---
-description: Commit and push to GitHub SjPn/REM after each meaningful update
+description: Always commit and push to GitHub SjPn/REM after meaningful updates
 alwaysApply: true
 ---
 
-# Git remote: SjPn/REM
+# Git push to REM
 
-- Remote: `https://github.com/SjPn/REM.git` (origin)
-- After finishing meaningful code/UI/docs changes in this project, **commit and push** to `origin` on the current branch (usually `main`) without waiting for a separate ask.
-- Do not force-push to `main`. Do not commit secrets (`.env`, credentials, DB dumps).
-- Skip empty commits. If there is nothing to commit, do not push.
-- Keep commit messages concise (1–2 sentences, why over what).
+Remote: `https://github.com/SjPn/REM.git` (`origin`).
+
+After finishing a meaningful code/UI/docs change in this project:
+
+1. Commit the relevant files (never `.env`, `*.db`, secrets, `.venv`).
+2. Push to `origin` on the current branch (usually `main`) without waiting for the user to ask.
+3. Prefer Windows Credential Manager / stored GitHub credentials (`git:https://github.com`); do not ask the user to re-authenticate if credentials already exist.
+4. After push, briefly confirm with the commit message and repo URL.
+
+Do not force-push to `main` unless the user explicitly requests it.
