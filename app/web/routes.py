@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.db.models import DealHypothesis, Listing, Property, PropertyEvent, WatchFilter
 from app.domain.fingerprint import phone_digits
+from app.domain.market_history import ensure_today_snapshot, series_for_charts
 from app.domain.market_stats import (
     KYIV_DISTRICTS,
     compute_all_market_stats,
@@ -501,7 +502,7 @@ def _mode_district_rows(
                 "stress_detail": st.detail if st else "",
             }
         )
-    rows.sort(key=lambda x: (-x["active"], x["avg_psm"] is None, -(x["avg_psm"] or 0)))
+    rows.sort(key=lambda x: (-x["active"], x["median_psm"] is None, -(x["median_psm"] or 0)))
     return rows
 
 
@@ -873,6 +874,53 @@ def market_page(
             "compare_by": compare_by,
             "yields": yields,
             "yield_by": yield_by,
+        },
+    )
+
+
+@router.get("/stats", response_class=HTMLResponse)
+def stats_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    mode: str = Query("sale", pattern="^(sale|rent)$"),
+):
+    import json
+
+    ensure_today_snapshot(db)
+    series = series_for_charts(db, limit=90)
+    market = compute_all_market_stats(db)
+    inventory = count_active_inventory(db)
+    market_slice = market["sale"] if mode == "sale" else pick_rent_market_slice(market)
+    stress_map = {s.district: s for s in compute_seller_stress(db, deal_type=mode)}
+    mode_rows = _mode_district_rows(
+        market, inventory, stress_map, mode=mode, opex=None
+    )
+    district_labels = [district_label_ru(r["district"]) for r in mode_rows]
+    district_medians = [r["median_psm"] for r in mode_rows]
+    chart_payload = {
+        "labels": series["labels"],
+        "sale_median": series["sale_median"],
+        "sale_avg": series["sale_avg"],
+        "rent_median": series["rent_median"],
+        "rent_avg": series["rent_avg"],
+        "sale_active": series["sale_active"],
+        "rent_active": series["rent_active"],
+        "district_labels": district_labels,
+        "district_medians": district_medians,
+        "mode": mode,
+    }
+    latest = series["latest"]
+    return templates.TemplateResponse(
+        request,
+        "stats.html",
+        {
+            "mode": mode,
+            "market_slice": market_slice,
+            "inventory": inventory,
+            "series_n": series["n"],
+            "latest": latest,
+            "mode_rows": mode_rows,
+            "chart_json": json.dumps(chart_payload, ensure_ascii=False),
         },
     )
 

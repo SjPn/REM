@@ -187,6 +187,26 @@ class WatchFilter(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class MarketStatSnapshot(Base):
+    """Daily city-level market snapshot for history charts."""
+
+    __tablename__ = "market_stat_snapshots"
+    __table_args__ = (UniqueConstraint("day", name="uq_market_stat_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)  # YYYY-MM-DD UTC
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    sale_median_psm: Mapped[float | None] = mapped_column(Float)
+    sale_avg_psm: Mapped[float | None] = mapped_column(Float)
+    sale_sample_n: Mapped[int] = mapped_column(Integer, default=0)
+    sale_active_n: Mapped[int] = mapped_column(Integer, default=0)
+    rent_median_psm: Mapped[float | None] = mapped_column(Float)
+    rent_avg_psm: Mapped[float | None] = mapped_column(Float)
+    rent_sample_n: Mapped[int] = mapped_column(Integer, default=0)
+    rent_active_n: Mapped[int] = mapped_column(Integer, default=0)
+    payload: Mapped[dict | None] = mapped_column(JSON)
+
+
 _engine = None
 _SessionLocal = None
 

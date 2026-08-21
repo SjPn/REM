@@ -13,7 +13,7 @@
           <strong>{{ inventory.rent_total }}</strong> в аренде
           {% if rent_slice_label %} · {{ rent_slice_label }}{% endif %}
         {% endif %}
-        · средняя {{ fmt_psm(market_slice.city_avg_psm, mode) }}
+        · медиана {{ fmt_psm(market_slice.city_median_psm, mode) }}
       </p>
     </div>
     {% if mode == 'rent' %}
@@ -32,9 +32,9 @@
 
   <section class="overview" aria-label="Сводка рынка">
     <div class="ov-card ov-wide">
-      <div class="ov-l">Средняя $/м² · Киев</div>
-      <div class="ov-n">{{ fmt_psm(market_slice.city_avg_psm, mode) }}</div>
-      <div class="ov-sub">медиана {{ fmt_psm(market_slice.city_median_psm, mode) }} · по {{ market_slice.city_count }} объявл.</div>
+      <div class="ov-l">Медиана $/м² · Киев</div>
+      <div class="ov-n">{{ fmt_psm(market_slice.city_median_psm, mode) }}</div>
+      <div class="ov-sub">средняя {{ fmt_psm(market_slice.city_avg_psm, mode) }} · по {{ market_slice.city_count }} объявл.</div>
     </div>
     <div class="ov-card">
       <div class="ov-n">{{ inventory.sale_total if mode == 'sale' else inventory.rent_total }}</div>
@@ -102,8 +102,8 @@
             <tr>
               <th>Район</th>
               <th>Объявлений</th>
-              <th>$/м² ср.</th>
               <th>$/м² мед.</th>
+              <th class="muted">$/м² ср.</th>
               <th title="С ценой и площадью">Выборка</th>
               <th title="Снятия / возвраты / уценки за неделю, 0–100">Индекс</th>
             </tr>
@@ -113,8 +113,8 @@
             <tr>
               <td><strong>{{ district_ru(row.district) }}</strong></td>
               <td class="num">{{ row.active }}</td>
-              <td class="num">{% if row.avg_psm is not none %}{{ '%.0f'|format(row.avg_psm) if mode == 'sale' else '%.1f'|format(row.avg_psm) }}{% else %}—{% endif %}</td>
-              <td class="num">{% if row.median_psm is not none %}{{ '%.0f'|format(row.median_psm) if mode == 'sale' else '%.1f'|format(row.median_psm) }}{% else %}—{% endif %}</td>
+              <td class="num"><strong>{% if row.median_psm is not none %}{{ '%.0f'|format(row.median_psm) if mode == 'sale' else '%.1f'|format(row.median_psm) }}{% else %}—{% endif %}</strong></td>
+              <td class="num muted">{% if row.avg_psm is not none %}{{ '%.0f'|format(row.avg_psm) if mode == 'sale' else '%.1f'|format(row.avg_psm) }}{% else %}—{% endif %}</td>
               <td class="muted">{{ row.sample_n or '—' }}</td>
               <td class="num" title="{{ row.stress_detail }}">{% if row.stress is not none %}{{ row.stress }}{% else %}—{% endif %}</td>
             </tr>
@@ -136,8 +136,8 @@
             <th>Район</th>
             <th>Продажа</th>
             <th>Аренда</th>
-            <th>Продажа $/м²</th>
-            <th>Аренда $/м²·мес</th>
+            <th>Продажа $/м² мед.</th>
+            <th>Аренда $/м²·мес мед.</th>
             <th title="Грубо: аренда×12 / продажа">Доходн.</th>
           </tr>
         </thead>
@@ -149,8 +149,8 @@
             <td><strong>{{ district_ru(row.district) }}</strong></td>
             <td class="num">{{ row.sale }}</td>
             <td class="num">{{ row.rent }}</td>
-            <td class="num">{% if price and price.sale_avg is not none %}{{ '%.0f'|format(price.sale_avg) }}{% else %}—{% endif %}</td>
-            <td class="num">{% if price and price.rent_avg is not none %}{{ '%.1f'|format(price.rent_avg) }}{% else %}—{% endif %}</td>
+            <td class="num">{% if price and price.sale_median is not none %}{{ '%.0f'|format(price.sale_median) }}{% elif price and price.sale_avg is not none %}{{ '%.0f'|format(price.sale_avg) }}{% else %}—{% endif %}</td>
+            <td class="num">{% if price and price.rent_median is not none %}{{ '%.1f'|format(price.rent_median) }}{% elif price and price.rent_avg is not none %}{{ '%.1f'|format(price.rent_avg) }}{% else %}—{% endif %}</td>
             <td class="num">{% if yrow %}{{ '%.1f'|format(yrow.yield_pct) }}%{% else %}—{% endif %}</td>
           </tr>
           {% endfor %}

@@ -1111,6 +1111,28 @@ button.ghost:hover {
   font-size: 0.9rem;
 }
 
+.chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.chart-card {
+  padding: 0.95rem 1rem 1.1rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-soft);
+  min-width: 0;
+}
+.chart-card.chart-wide { grid-column: 1 / -1; }
+.chart-box {
+  position: relative;
+  height: 260px;
+  margin-top: 0.55rem;
+}
+.chart-box-tall { height: 320px; }
+.chart-hint { margin-top: 0.65rem; font-size: 0.9rem; }
+
 /* legacy aliases used in older class names */
 .top, .wrap, .stats, .stat, .market-preview, .market-summary, .market-box { }
 .stat .n { font-family: var(--display); font-weight: 800; font-size: 1.6rem; }
@@ -1126,6 +1148,7 @@ button.ghost:hover {
   .listing { grid-template-columns: 1fr; }
   .listing-side { text-align: left; }
   .filters:not(.filters-side) { top: auto; position: static; }
+  .chart-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 700px) {
   .market-strip { grid-template-columns: 1fr; }

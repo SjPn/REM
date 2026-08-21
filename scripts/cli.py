@@ -402,6 +402,26 @@ def prune_irrelevant() -> None:
     rprint({"removed_listings": removed, "removed_orphan_properties": orphans})
 
 
+@app.command("snapshot-market")
+def snapshot_market() -> None:
+    """Write/refresh today's market snapshot for /stats charts."""
+    from app.domain.market_history import record_market_snapshot
+
+    init_db()
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        snap = record_market_snapshot(db, force=True)
+    rprint(
+        {
+            "day": snap.day,
+            "sale_median": snap.sale_median_psm,
+            "rent_median": snap.rent_median_psm,
+            "sale_active": snap.sale_active_n,
+            "rent_active": snap.rent_active_n,
+        }
+    )
+
+
 @app.command()
 def stats() -> None:
     """Show DB fill stats."""

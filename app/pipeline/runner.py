@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import CrawlRun, utcnow
 from app.config import get_settings
+from app.domain.market_history import record_market_snapshot
 from app.pipeline.ingest import ingest_many
 from app.pipeline.reconcile import mark_vanished, rescore_all_vanished
 from app.scrapers import SCRAPERS, crawl_source
@@ -79,6 +80,12 @@ def run_crawl(
             db.commit()
 
     rescored = rescore_all_vanished(db)
+    try:
+        snap = record_market_snapshot(db, force=True)
+        summary["market_snapshot_day"] = snap.day
+    except Exception:  # noqa: BLE001
+        logger.exception("market snapshot failed")
+        summary["market_snapshot_day"] = None
     summary["rescored_hypotheses"] = rescored
     summary["finished_at"] = utcnow().isoformat()
     return summary

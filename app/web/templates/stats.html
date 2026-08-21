@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% set active_nav = "stats" %}
+{% set deal_mode = mode %}
+{% block title %}Статистика · {{ 'продажа' if mode == 'sale' else 'аренда' }} — REM{% endblock %}
+{% block head %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js" defer></script>
+{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <h1 class="page-title">Статистика</h1>
+      <p class="page-lead">
+        Ежедневные снимки рынка · акцент на <strong>медиане</strong> $/м²
+        {% if series_n %} · точек: <strong>{{ series_n }}</strong>{% endif %}
+        {% if latest %} · обновлено {{ latest.day }}{% endif %}
+      </p>
+    </div>
+  </div>
+
+  <section class="overview" aria-label="Сейчас">
+    <div class="ov-card ov-wide">
+      <div class="ov-l">Медиана $/м² · Киев · сейчас</div>
+      <div class="ov-n">{{ fmt_psm(market_slice.city_median_psm, mode) }}</div>
+      <div class="ov-sub">средняя {{ fmt_psm(market_slice.city_avg_psm, mode) }} · выборка {{ market_slice.city_count }}</div>
+    </div>
+    <div class="ov-card">
+      <div class="ov-n">{{ inventory.sale_total if mode == 'sale' else inventory.rent_total }}</div>
+      <div class="ov-l">В сети</div>
+    </div>
+    <div class="ov-card">
+      <div class="ov-n">{{ series_n }}</div>
+      <div class="ov-l">Дней в истории</div>
+      <div class="ov-sub">по одному снимку в сутки</div>
+    </div>
+  </section>
+
+  <section class="section chart-grid">
+    <div class="chart-card">
+      <div class="section-head tight">
+        <h2>Медиана $/м² · Киев</h2>
+        <span class="muted">продажа и аренда</span>
+      </div>
+      <div class="chart-box">
+        <canvas id="chart-median" aria-label="График медианы"></canvas>
+      </div>
+      {% if series_n < 2 %}
+        <p class="empty chart-hint">Пока одна точка. График наполнится после следующих сборов (ежедневно).</p>
+      {% endif %}
+    </div>
+
+    <div class="chart-card">
+      <div class="section-head tight">
+        <h2>Объявлений в сети</h2>
+        <span class="muted">продажа / аренда</span>
+      </div>
+      <div class="chart-box">
+        <canvas id="chart-inventory" aria-label="График объёма"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-card chart-wide">
+      <div class="section-head tight">
+        <h2>Медиана по районам · {{ 'продажа' if mode == 'sale' else 'аренда' }}</h2>
+        <span class="muted">сейчас</span>
+      </div>
+      <div class="chart-box chart-box-tall">
+        <canvas id="chart-districts" aria-label="График по районам"></canvas>
+      </div>
+    </div>
+  </section>
+
+  {% if mode_rows %}
+  <section class="section">
+    <div class="section-head">
+      <h2>Таблица районов</h2>
+      <a class="link-more" href="/market?mode={{ mode }}">Рынок →</a>
+    </div>
+    <div class="table-wrap">
+      <table class="market-table">
+        <thead>
+          <tr>
+            <th>Район</th>
+            <th>В сети</th>
+            <th>$/м² мед.</th>
+            <th class="muted">$/м² ср.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in mode_rows %}
+          <tr>
+            <td><strong>{{ district_ru(row.district) }}</strong></td>
+            <td class="num">{{ row.active }}</td>
+            <td class="num"><strong>{% if row.median_psm is not none %}{{ '%.0f'|format(row.median_psm) if mode == 'sale' else '%.1f'|format(row.median_psm) }}{% else %}—{% endif %}</strong></td>
+            <td class="num muted">{% if row.avg_psm is not none %}{{ '%.0f'|format(row.avg_psm) if mode == 'sale' else '%.1f'|format(row.avg_psm) }}{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const data = {{ chart_json | safe }};
+  const ink = '#1c2b33';
+  const muted = '#5c6b73';
+  const accent = '#0c6b5c';
+  const accent2 = '#9a4d12';
+  const grid = 'rgba(28, 43, 51, 0.08)';
+
+  function lineOpts(yTitle) {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: muted, boxWidth: 12, font: { family: 'Public Sans' } } },
+        tooltip: { callbacks: {} }
+      },
+      scales: {
+        x: { ticks: { color: muted, maxRotation: 0, autoSkipPadding: 12 }, grid: { color: grid } },
+        y: {
+          title: { display: !!yTitle, text: yTitle, color: muted },
+          ticks: { color: muted },
+          grid: { color: grid }
+        }
+      }
+    };
+  }
+
+  function afterChartsReady(fn) {
+    if (window.Chart) { fn(); return; }
+    const t = setInterval(function () {
+      if (window.Chart) { clearInterval(t); fn(); }
+    }, 40);
+  }
+
+  afterChartsReady(function () {
+    const medianCtx = document.getElementById('chart-median');
+    if (medianCtx) {
+      new Chart(medianCtx, {
+        type: 'line',
+        data: {
+          labels: data.labels,
+          datasets: [
+            {
+              label: 'Продажа · медиана',
+              data: data.sale_median,
+              borderColor: accent,
+              backgroundColor: 'rgba(12, 107, 92, 0.12)',
+              tension: 0.25,
+              spanGaps: true,
+              pointRadius: data.labels.length < 3 ? 4 : 2
+            },
+            {
+              label: 'Аренда · медиана',
+              data: data.rent_median,
+              borderColor: accent2,
+              backgroundColor: 'rgba(154, 77, 18, 0.1)',
+              tension: 0.25,
+              spanGaps: true,
+              yAxisID: 'y1',
+              pointRadius: data.labels.length < 3 ? 4 : 2
+            }
+          ]
+        },
+        options: {
+          ...lineOpts(),
+          scales: {
+            x: { ticks: { color: muted }, grid: { color: grid } },
+            y: {
+              position: 'left',
+              title: { display: true, text: 'продажа $/м²', color: muted },
+              ticks: { color: muted },
+              grid: { color: grid }
+            },
+            y1: {
+              position: 'right',
+              title: { display: true, text: 'аренда $/м²·мес', color: muted },
+              ticks: { color: muted },
+              grid: { drawOnChartArea: false }
+            }
+          }
+        }
+      });
+    }
+
+    const invCtx = document.getElementById('chart-inventory');
+    if (invCtx) {
+      new Chart(invCtx, {
+        type: 'line',
+        data: {
+          labels: data.labels,
+          datasets: [
+            {
+              label: 'Продажа',
+              data: data.sale_active,
+              borderColor: accent,
+              tension: 0.25,
+              spanGaps: true,
+              pointRadius: data.labels.length < 3 ? 4 : 2
+            },
+            {
+              label: 'Аренда',
+              data: data.rent_active,
+              borderColor: accent2,
+              tension: 0.25,
+              spanGaps: true,
+              pointRadius: data.labels.length < 3 ? 4 : 2
+            }
+          ]
+        },
+        options: lineOpts('объявлений')
+      });
+    }
+
+    const distCtx = document.getElementById('chart-districts');
+    if (distCtx && data.district_labels && data.district_labels.length) {
+      new Chart(distCtx, {
+        type: 'bar',
+        data: {
+          labels: data.district_labels,
+          datasets: [{
+            label: data.mode === 'sale' ? 'Медиана $/м²' : 'Медиана $/м²·мес',
+            data: data.district_medians,
+            backgroundColor: 'rgba(12, 107, 92, 0.55)',
+            borderColor: accent,
+            borderWidth: 1,
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: muted, maxRotation: 45, minRotation: 0 }, grid: { display: false } },
+            y: { ticks: { color: muted }, grid: { color: grid } }
+          }
+        }
+      });
+    }
+  });
+})();
+</script>
+{% endblock %}

@@ -30,6 +30,9 @@
           {% if nav == 'market' %}
             <a class="mode-btn {% if dm == 'sale' %}is-on{% endif %}" href="/market?mode=sale">Продажа</a>
             <a class="mode-btn {% if dm == 'rent' %}is-on{% endif %}" href="/market?mode=rent">Аренда</a>
+          {% elif nav == 'stats' %}
+            <a class="mode-btn {% if dm == 'sale' %}is-on{% endif %}" href="/stats?mode=sale">Продажа</a>
+            <a class="mode-btn {% if dm == 'rent' %}is-on{% endif %}" href="/stats?mode=rent">Аренда</a>
           {% elif nav == 'deals' %}
             <a class="mode-btn {% if dm == 'sale' %}is-on{% endif %}" href="/deals?bucket={{ bucket_q }}&deal_type=sale">Продажа</a>
             <a class="mode-btn {% if dm == 'rent' %}is-on{% endif %}" href="/deals?bucket={{ bucket_q }}&deal_type=rent">Аренда</a>
@@ -41,6 +44,7 @@
         <nav class="nav" aria-label="Разделы">
           <a class="nav-link {% if nav == 'listings' %}is-active{% endif %}" href="/?deal_type={{ dm }}">Объявления</a>
           <a class="nav-link {% if nav == 'market' %}is-active{% endif %}" href="/market?mode={{ dm }}">Рынок</a>
+          <a class="nav-link {% if nav == 'stats' %}is-active{% endif %}" href="/stats?mode={{ dm }}">Статистика</a>
           <a class="nav-link {% if nav == 'deals' %}is-active{% endif %}" href="/deals?bucket=likely_deal&deal_type={{ dm }}">Сделки</a>
         </nav>
       </div>
