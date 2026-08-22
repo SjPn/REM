@@ -70,3 +70,38 @@ def test_auto_exclude_and_user_clear(tmp_path, monkeypatch):
         assert not bad.exclude_from_stats
         apply_auto_stats_exclusion(bad, suspicious=True)
         assert not bad.exclude_from_stats
+
+
+def test_auto_clear_when_price_repaired(tmp_path, monkeypatch):
+    db_path = tmp_path / "ex2.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    from app.config import get_settings
+    from app.db import models as db_models
+    from app.db.models import get_session_factory, init_db
+
+    get_settings.cache_clear()
+    db_models._engine = None
+    db_models._SessionLocal = None
+    init_db()
+    now = datetime.now(timezone.utc)
+    with get_session_factory()() as db:
+        lst = Listing(
+            source="rieltor",
+            external_id="x1",
+            url="https://e/x1",
+            deal_type="sale",
+            status="active",
+            price=17_250_000,
+            currency="USD",
+            area_sqm=90,
+            city="Київ",
+            exclude_from_stats=True,
+            raw_extra={"stats_auto_excluded": True, "price_suspicious": True},
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+        db.add(lst)
+        db.commit()
+        apply_auto_stats_exclusion(lst, suspicious=False)
+        assert not lst.exclude_from_stats
+        assert "stats_auto_excluded" not in (lst.raw_extra or {})
