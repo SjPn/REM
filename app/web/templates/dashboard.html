@@ -127,13 +127,12 @@
 
         {% if deal_type == 'rent' %}
         <label class="f-label" for="f-opex">OPEX в цене</label>
-        <select id="f-opex" name="opex">
+        <select id="f-opex" name="opex" title="OPEX из текста объявления; без деталей часто «не указан»">
           <option value="" {% if not opex %}selected{% endif %}>Авто (медиана)</option>
           <option value="without" {% if opex == 'without' %}selected{% endif %}>Без OPEX ({{ market.rent_without_opex.city_count }})</option>
           <option value="with" {% if opex == 'with' %}selected{% endif %}>С OPEX ({{ market.rent_with_opex.city_count }})</option>
           <option value="unknown" {% if opex == 'unknown' %}selected{% endif %}>Не указан ({{ market.rent_opex_unknown.city_count }})</option>
         </select>
-        <p class="f-hint muted">OPEX — из текста объявления. Без детальной страницы часто «не указан»; медианы считаются без карточек с ✓ «не в статистике».</p>
         {% endif %}
 
         <div class="f-block">
@@ -248,15 +247,21 @@
               <div class="listing-addr">
                 {% if x.address_raw %}{{ x.address_raw }}{% else %}<span class="warn-text">адрес не найден</span>{% endif %}
                 {% if x.district %} · {{ district_ru(x.district) }}{% endif %}
-                {% if x.floor is not none %} · этаж {{ x.floor }}{% else %} · <span class="warn-text">этаж ?</span>{% endif %}
               </div>
             </div>
             <div class="listing-side">
-              <div class="price">{{ fmt_price(x.price, x.currency) }}</div>
-              {% set psm = fmt_listing_psm(x.price, x.currency, x.area_sqm, x.deal_type, x.price_per_sqm) %}
-              {% if psm %}<div class="psm">{{ psm }}</div>{% endif %}
-              <div class="area">
-                {% if x.area_sqm %}{{ x.area_sqm }} м²{% else %}<span class="warn-text">площадь ?</span>{% endif %}
+              <div class="listing-metrics">
+                <div class="price">{{ fmt_price(x.price, x.currency) }}</div>
+                {% set psm = fmt_listing_psm(x.price, x.currency, x.area_sqm, x.deal_type, x.price_per_sqm) %}
+                {% if psm %}<div class="psm">{{ psm }}</div>{% endif %}
+                <div class="area">
+                  {% if x.area_sqm %}{{ x.area_sqm }} м²{% else %}<span class="warn-text">площадь ?</span>{% endif %}
+                </div>
+                {% if x.floor is not none %}
+                  <div class="listing-floor">этаж {{ x.floor }}</div>
+                {% else %}
+                  <div class="listing-floor is-missing">этаж ?</div>
+                {% endif %}
               </div>
               {% if sig.dom_days is not none %}
                 <div class="dom">{{ sig.dom_days }} дн.</div>
