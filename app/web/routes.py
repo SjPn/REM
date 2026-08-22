@@ -576,22 +576,23 @@ def dashboard(
     if area_min is not None and area_max is not None and area_min > area_max:
         area_min, area_max = area_max, area_min
 
-    activity = activity_summary(db, hours=24)
+    activity_filter = activity
+    activity_stats = activity_summary(db, hours=24, deal_type=deal_type)
     watches = db.scalars(select(WatchFilter).order_by(WatchFilter.created_at.desc()).limit(20)).all()
     inventory = count_active_inventory(db)
 
     activity_since = datetime.now(timezone.utc) - timedelta(hours=24)
     activity_ids: list[int] | None = None
-    if activity == "vanished":
+    if activity_filter == "vanished":
         activity_ids = listing_ids_for_vanished(
             db, since=activity_since, deal_type=deal_type
         )
-    elif activity == "price_drop":
+    elif activity_filter == "price_drop":
         activity_ids = listing_ids_for_price_drops(
             db, since=activity_since, deal_type=deal_type
         )
 
-    if activity == "vanished":
+    if activity_filter == "vanished":
         filters = [
             Listing.deal_type == deal_type,
             Listing.status == "vanished",
@@ -601,7 +602,7 @@ def dashboard(
                 filters.append(Listing.id.in_(activity_ids))
             else:
                 filters.append(Listing.id == -1)  # empty result
-    elif activity == "price_drop":
+    elif activity_filter == "price_drop":
         filters = [
             Listing.deal_type == deal_type,
             Listing.status.in_(["active", "relisted", "vanished"]),
@@ -631,7 +632,7 @@ def dashboard(
             )
         )
     since = _period_since(period)
-    if since is not None and activity is None:
+    if since is not None and activity_filter is None:
         filters.append(Listing.first_seen_at >= since)
     if q:
         like = f"%{q.strip()}%"
@@ -757,7 +758,7 @@ def dashboard(
         "segment": segment or None,
         "period": period or None,
         "district": district if district in KYIV_DISTRICTS else None,
-        "activity": activity or None,
+        "activity": activity_filter or None,
         "opex": opex_mode or None,
         "below_market": below_market or None,
         "sort": sort if sort != "newest" else None,
@@ -772,7 +773,8 @@ def dashboard(
         request,
         "dashboard.html",
         {
-            "activity": activity,
+            "activity_stats": activity_stats,
+            "activity_filter": activity_filter or "",
             "watches": watches,
             "signals": signals,
             "listings": listings,
@@ -786,7 +788,6 @@ def dashboard(
             "q": q or "",
             "period": period or "",
             "district": district if district in KYIV_DISTRICTS else "",
-            "activity": activity or "",
             "opex": opex_mode or "",
             "below_market": below_market,
             "sort": sort,

@@ -21,19 +21,19 @@
 
   <section class="overview" aria-label="Сводка">
     <a class="ov-card is-accent" href="/?deal_type={{ deal_type }}&period=24h">
-      <div class="ov-n">{{ activity.new_listings }}</div>
+      <div class="ov-n">{{ activity_stats.new_listings }}</div>
       <div class="ov-l">Новые за сутки</div>
     </a>
-    <a class="ov-card is-accent {% if activity == 'vanished' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=vanished">
-      <div class="ov-n">{{ activity.vanished }}</div>
+    <a class="ov-card is-accent {% if activity_filter == 'vanished' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=vanished">
+      <div class="ov-n">{{ activity_stats.vanished }}</div>
       <div class="ov-l">Исчезли</div>
     </a>
-    <a class="ov-card is-accent {% if activity == 'price_drop' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=price_drop">
-      <div class="ov-n">{{ activity.price_drops }}</div>
+    <a class="ov-card is-accent {% if activity_filter == 'price_drop' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=price_drop">
+      <div class="ov-n">{{ activity_stats.price_drops }}</div>
       <div class="ov-l">Уценили</div>
     </a>
     <a class="ov-card is-accent" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">
-      <div class="ov-n">{{ activity.likely_deals }}</div>
+      <div class="ov-n">{{ activity_stats.likely_deals }}</div>
       <div class="ov-l">Похоже на сделку</div>
     </a>
     <div class="ov-card ov-wide">
@@ -70,7 +70,7 @@
     <aside class="filter-side" aria-label="Фильтры">
       <form class="filters filters-side" method="get" action="/">
         <input type="hidden" name="deal_type" value="{{ deal_type }}" />
-        {% if activity %}<input type="hidden" name="activity" value="{{ activity }}" />{% endif %}
+        {% if activity_filter %}<input type="hidden" name="activity" value="{{ activity_filter }}" />{% endif %}
         <div class="filter-side-head">
           <h2>Фильтры</h2>
           <a class="link-more" href="/?deal_type={{ deal_type }}">Сбросить</a>
@@ -196,9 +196,9 @@
       <div class="section-head">
         <h2>Список</h2>
         <span class="muted">
-          {% if activity == 'vanished' %}исчезли за сутки · {% elif activity == 'price_drop' %}уценили за сутки · {% endif %}
+          {% if activity_filter == 'vanished' %}исчезли за сутки · {% elif activity_filter == 'price_drop' %}уценили за сутки · {% endif %}
           {{ total }} · стр. {{ page }}/{{ pages }}
-          {% if activity %}<a class="link-more" href="/?deal_type={{ deal_type }}">сбросить</a>{% endif %}
+          {% if activity_filter %}<a class="link-more" href="/?deal_type={{ deal_type }}">сбросить</a>{% endif %}
         </span>
       </div>
 

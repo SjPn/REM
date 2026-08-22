@@ -145,3 +145,68 @@ def test_listing_ids_for_activity(tmp_path, monkeypatch):
     assert called["sec"] == 1.0
     sleep_crawl_delay(blocked=True)
     assert called["sec"] == 8.0
+
+
+def test_activity_summary_respects_deal_type(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    db_path = tmp_path / "act2.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    from app.config import get_settings
+    from app.db import models as db_models
+    from app.db.models import Listing, PropertyEvent, get_session_factory, init_db
+    from app.domain.signals import activity_summary
+    from app.domain.ttl_cache import cache_clear
+
+    get_settings.cache_clear()
+    cache_clear()
+    db_models._engine = None
+    db_models._SessionLocal = None
+    init_db()
+    SessionLocal = get_session_factory()
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        sale = Listing(
+            source="t",
+            external_id="s1",
+            url="https://e/s1",
+            deal_type="sale",
+            status="active",
+            first_seen_at=now,
+            last_seen_at=now,
+            price=100000,
+            currency="USD",
+        )
+        rent = Listing(
+            source="t",
+            external_id="r1",
+            url="https://e/r1",
+            deal_type="rent",
+            status="active",
+            first_seen_at=now,
+            last_seen_at=now,
+            price=1000,
+            currency="USD",
+        )
+        db.add_all([sale, rent])
+        db.flush()
+        db.add_all(
+            [
+                PropertyEvent(
+                    listing_id=sale.id,
+                    event_type="price_changed",
+                    occurred_at=now,
+                    payload={"old_price": 120000, "new_price": 100000},
+                ),
+                PropertyEvent(
+                    listing_id=rent.id,
+                    event_type="price_changed",
+                    occurred_at=now,
+                    payload={"old_price": 1200, "new_price": 1000},
+                ),
+            ]
+        )
+        db.commit()
+        assert activity_summary(db, hours=24, deal_type="sale")["price_drops"] == 1
+        assert activity_summary(db, hours=24, deal_type="rent")["price_drops"] == 1
+        assert activity_summary(db, hours=24)["price_drops"] == 2
