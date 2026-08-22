@@ -28,6 +28,44 @@ def test_parse_price_rejects_digit_soup():
     assert price is None or price < 1_000_000_000
 
 
+def test_parse_price_rieltor_photo_count_prefix():
+    """Photo counter '17' must not glue to '250 000 $'."""
+    blob = "17 17 250 000 $ 2 790 $/м² 90 м² Фортечний тупик"
+    price, cur = parse_price(blob)
+    assert cur == "USD"
+    assert price == 250_000
+    psm, _ = parse_price_per_sqm(blob)
+    assert psm == 2790
+
+
+def test_parse_price_prefers_usd_over_nbu_uah():
+    blob = "250 000 $ 1 645 $/м² Київ 152 м² 11 207 750грн"
+    price, cur = parse_price(blob)
+    assert cur == "USD"
+    assert price == 250_000
+
+
+def test_strip_leading_price_junk():
+    from app.scrapers.http_utils import strip_leading_price_junk
+
+    raw = "17 17 250 000 $ 2 790 $/м² Фортечний тупик, 6/8"
+    assert strip_leading_price_junk(raw).startswith("Фортечний")
+
+
+def test_normalize_rieltor_glued_total():
+    norm = normalize_listing_price(
+        price=17_250_000,
+        currency="USD",
+        area_sqm=90,
+        deal_type="sale",
+        price_per_sqm=2790,
+        title="17 17 250 000 $ 2 790 $/м² Фортечний тупик 90 м²",
+    )
+    assert norm.price == pytest.approx(250_000, rel=0.01)
+    assert norm.price_per_sqm == pytest.approx(2790, rel=0.01)
+    assert not norm.suspicious_psm
+
+
 def test_normalize_rent_price_that_is_actually_psm():
     norm = normalize_listing_price(
         price=15,

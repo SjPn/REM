@@ -14,6 +14,7 @@ from app.domain.signals import detect_opex, parse_cap_and_noi
 from app.domain.list_card import list_card_changed
 from app.domain.listing_stats import apply_auto_stats_exclusion, set_stats_exclusion
 from app.domain.pricing import normalize_listing_price, sanitize_price_per_sqm
+from app.scrapers.http_utils import strip_leading_price_junk
 from app.scrapers.base import RawListing
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,8 @@ def upsert_listing(
         deal_type=raw.deal_type,
         price_per_sqm=norm.price_per_sqm,
     )
+    if raw.source == "rieltor" and raw.title:
+        raw.title = strip_leading_price_junk(raw.title) or raw.title
     if norm.reinterpreted_as_psm:
         finance_extra_hint = {"price_was_psm": True, "price_norm": norm.detail}
     else:

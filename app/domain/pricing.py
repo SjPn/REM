@@ -256,16 +256,28 @@ def normalize_listing_price(
         and area_sqm is not None
         and float(area_sqm) > 0
     ):
-        # Text wins: "25 000 $/міс 15 $/м²"
-        total_usd = to_usd(float(parsed_total), parsed_cur or cur)
-        psm_usd = (total_usd / float(area_sqm)) if total_usd else None
+        area_f = float(area_sqm)
+        psm_f = float(parsed_psm)
+        options = [float(parsed_total), round(psm_f * area_f, 2)]
+        if price is not None:
+            options.append(float(price))
+        total_f = min(
+            options,
+            key=lambda t: abs(t / area_f - psm_f) / max(psm_f, 1.0),
+        )
+        if price is not None:
+            stored = float(price)
+            stored_err = abs(stored / area_f - psm_f) / max(psm_f, 1.0)
+            if stored_err < 0.06:
+                total_f = stored
+        total_usd = to_usd(total_f, parsed_cur or cur)
         return PriceNorm(
-            float(parsed_total),
+            total_f,
             parsed_cur or currency or cur,
-            float(parsed_psm),
+            psm_f,
             False,
             suspicious_psm=psm_suspicious(
-                deal_type, (total_usd / float(area_sqm)) if total_usd and area_sqm else None
+                deal_type, (total_usd / area_f) if total_usd else None
             ),
             detail="text_total_and_psm",
         )

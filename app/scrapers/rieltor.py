@@ -118,6 +118,68 @@ class RieltorScraper:
 
     def _parse_list(self, html: str, deal_type: DealType) -> list[RawListing]:
         soup = BeautifulSoup(html, "lxml")
+        cards = soup.select("div.catalog-card[data-catalog-item-id]")
+        if cards:
+            return self._parse_catalog_cards(cards, deal_type)
+        return self._parse_list_links(soup, deal_type)
+
+    def _parse_catalog_cards(self, cards, deal_type: DealType) -> list[RawListing]:
+        items: list[RawListing] = []
+        for card in cards:
+            ext_id = (card.get("data-catalog-item-id") or "").strip()
+            if not ext_id:
+                continue
+            link = card.select_one("a[href*='/commercials-'][href*='/view/']")
+            if not link or not link.get("href"):
+                continue
+            url = urljoin("https://rieltor.ua", link["href"]).split("?")[0]
+
+            price_text = (card.get("data-label") or "").strip()
+            price_el = card.select_one(".catalog-card-price-title")
+            if price_el:
+                price_text = price_el.get_text(" ", strip=True) or price_text
+            details_el = card.select_one(".catalog-card-price-details")
+            psm_text = details_el.get_text(" ", strip=True) if details_el else ""
+
+            price, currency = parse_price(price_text)
+            psm, _psm_cur = parse_price_per_sqm(psm_text or price_text)
+
+            local = card.get_text(" ", strip=True)[:600]
+            area = parse_area(local)
+            floor = parse_floor(local)
+            phones = extract_phones(local)
+
+            addr_el = card.select_one(".catalog-card-address")
+            address = addr_el.get_text(" ", strip=True) if addr_el else None
+            desc_el = card.select_one(".catalog-card-description")
+            desc = desc_el.get_text(" ", strip=True) if desc_el else ""
+            title = " ".join(x for x in (address, desc) if x).strip()[:500] or f"RIELTOR {ext_id}"
+
+            items.append(
+                RawListing(
+                    source=self.source,
+                    external_id=ext_id,
+                    url=url,
+                    deal_type=deal_type.value,
+                    title=title,
+                    property_type=guess_property_type(f"{title} {local}"),
+                    price=price,
+                    currency=currency or ("USD" if deal_type == DealType.SALE else "UAH"),
+                    price_per_sqm=psm,
+                    area_sqm=area,
+                    floor=floor,
+                    address_raw=address or self._extract_address(local),
+                    district=self._extract_district(local),
+                    city="Київ",
+                    phone=phones[0] if phones else None,
+                    extra={"list_only": True},
+                )
+            )
+        if not items:
+            logger.warning("RIELTOR: catalog cards found but none parsed")
+        return items
+
+    def _parse_list_links(self, soup: BeautifulSoup, deal_type: DealType) -> list[RawListing]:
         seen: set[str] = set()
         items: list[RawListing] = []
         for a in soup.find_all("a", href=True):
@@ -131,7 +193,6 @@ class RieltorScraper:
             seen.add(ext_id)
             url = urljoin("https://rieltor.ua", href).split("?")[0]
             title = a.get_text(" ", strip=True)
-            # one level up only — enough for price chip, avoids merging neighbors
             parent = a.parent
             local = " ".join(
                 t for t in [(title or ""), parent.get_text(" ", strip=True) if parent else ""] if t

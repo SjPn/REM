@@ -389,11 +389,8 @@ class HttpClient:
 
 
 
-def parse_price(text: str | None) -> tuple[float | None, str | None]:
-    """Parse a single *total* price near a currency marker. Skip $/м² chips."""
-    if not text:
-        return None, None
-
+def _collect_price_candidates(text: str) -> list[tuple[float, str, int, int]]:
+    """All currency-total matches (overlapping), excluding $/м² rates."""
     patterns = [
         (r"(?:USD|\$|дол(?:\.|арі|ларов)?)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "USD"),
         (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:USD|\$|дол)", "USD"),
@@ -402,11 +399,14 @@ def parse_price(text: str | None) -> tuple[float | None, str | None]:
         (r"(?:UAH|₴|грн)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "UAH"),
         (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:UAH|₴|грн)", "UAH"),
     ]
-    candidates: list[tuple[float, str, int]] = []
+    candidates: list[tuple[float, str, int, int]] = []
+    seen: set[tuple[float, str]] = set()
     for pat, cur in patterns:
-        for m in re.finditer(pat, text, flags=re.IGNORECASE):
-            # Skip "115 $/м²" — rate, not total. Keep "2 500 $ / міс" (monthly total).
-            tail = text[m.end() : m.end() + 12]
+        for i in range(len(text)):
+            m = re.match(pat, text[i:], flags=re.IGNORECASE)
+            if not m:
+                continue
+            tail = text[i + m.end() : i + m.end() + 12]
             if re.match(
                 r"\s*/\s*м(?:²|2)|\s*/\s*m2|\s*/\s*sqm|\s*за\s*м(?:²|2)",
                 tail,
@@ -414,13 +414,95 @@ def parse_price(text: str | None) -> tuple[float | None, str | None]:
             ):
                 continue
             value = _to_price_number(m.group(1))
-            if value is not None:
-                candidates.append((value, cur, m.start()))
+            if value is None:
+                continue
+            key = (value, cur)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append((value, cur, i, len(m.group(0))))
+    return candidates
+
+
+def _psm_total_mismatch(
+    total: float,
+    total_cur: str,
+    psm: float,
+    psm_cur: str | None,
+    area: float,
+) -> float:
+    """Relative error between total/area and explicit $/m² (same currency)."""
+    if area <= 0 or psm <= 0:
+        return 999.0
+    implied = total / area
+    if psm_cur and total_cur != psm_cur:
+        return 999.0
+    return abs(implied - psm) / max(psm, 1.0)
+
+
+def _resolve_price_candidates(
+    candidates: list[tuple[float, str, int, int]],
+    text: str,
+) -> tuple[float | None, str | None]:
+    """Pick the total price, not a glued prefix (photo count) or NBU UAH hint."""
+    if not candidates:
+        return None, None
+    if len(candidates) == 1:
+        return candidates[0][0], candidates[0][1]
+
+    psm, psm_cur = parse_price_per_sqm(text)
+    area = parse_area(text)
+
+    if psm is not None and area is not None and area > 0:
+        best: tuple[float, str] | None = None
+        best_err = 999.0
+        for val, cur, _pos, _mlen in candidates:
+            err = _psm_total_mismatch(val, cur, psm, psm_cur, area)
+            if err < best_err:
+                best_err = err
+                best = (val, cur)
+        if best and best_err < 0.18:
+            return best
+
+    usd = [c for c in candidates if c[1] == "USD"]
+    uah = [c for c in candidates if c[1] == "UAH"]
+
+    if psm is not None and psm > 0 and usd:
+        plausible = [c for c in usd if c[0] / psm >= 25]
+        if plausible:
+            if area is not None and area > 0:
+                best = min(
+                    plausible,
+                    key=lambda c: _psm_total_mismatch(c[0], c[1], psm, psm_cur, area),
+                )
+                return best[0], best[1]
+            best = max(plausible, key=lambda c: (c[3], c[0]))
+            return best[0], best[1]
+
+    if usd and uah:
+        pool = sorted(usd, key=lambda x: x[0])
+        if len(pool) > 1 and pool[-1][0] > pool[0][0] * 8:
+            return pool[0][0], pool[0][1]
+        return max(usd, key=lambda x: x[0])[0], max(usd, key=lambda x: x[0])[1]
+
+    if len(usd) > 1:
+        pool = sorted(usd, key=lambda x: x[0])
+        if pool[-1][0] > pool[0][0] * 8:
+            return pool[0][0], pool[0][1]
+
+    candidates.sort(key=lambda x: (-x[0], x[2]))
+    return candidates[0][0], candidates[0][1]
+
+
+def parse_price(text: str | None) -> tuple[float | None, str | None]:
+    """Parse a single *total* price near a currency marker. Skip $/м² chips."""
+    if not text:
+        return None, None
+
+    candidates = _collect_price_candidates(text)
 
     if candidates:
-        # Prefer the largest plausible total (rieltor cards often show total + $/м²)
-        candidates.sort(key=lambda x: (-x[0], x[2]))
-        return candidates[0][0], candidates[0][1]
+        return _resolve_price_candidates(candidates, text)
 
     lower = text.lower()
     currency = None
@@ -437,6 +519,23 @@ def parse_price(text: str | None) -> tuple[float | None, str | None]:
     if not m:
         return None, currency
     return _to_price_number(m.group(1)), currency
+
+
+def strip_leading_price_junk(text: str | None) -> str | None:
+    """Remove duplicated photo-count + price prefix scraped from RIELTOR cards."""
+    if not text:
+        return text
+    cleaned = re.sub(
+        r"^(?:\d+\s+){1,4}"
+        r"(?:\d{1,3}(?:[ \u00a0]\d{3})+\s*\$"
+        r"(?:\s*\d{1,3}(?:[ \u00a0]\d{3})*\s*(?:USD|\$)?\s*/\s*м(?:²|2))?"
+        r"\s*)+",
+        "",
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned or text
 
 
 def parse_price_per_sqm(text: str | None) -> tuple[float | None, str | None]:

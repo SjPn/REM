@@ -265,6 +265,7 @@ def fix_prices() -> None:
     from app.domain.listing_stats import apply_auto_stats_exclusion
     from app.domain.pricing import normalize_listing_price, psm_suspicious, sanitize_price_per_sqm
     from app.domain.signals import listing_psm_usd
+    from app.scrapers.http_utils import strip_leading_price_junk
 
     init_db()
     SessionLocal = get_session_factory()
@@ -340,6 +341,11 @@ def fix_prices() -> None:
             apply_auto_stats_exclusion(
                 lst, suspicious=bool(extra.get("price_suspicious"))
             )
+
+            if lst.source == "rieltor" and lst.title:
+                cleaned = strip_leading_price_junk(lst.title)
+                if cleaned and cleaned != lst.title:
+                    lst.title = cleaned
 
             after = (lst.price, lst.currency, lst.price_per_sqm)
             if after != before or extra != (lst.raw_extra or {}):
