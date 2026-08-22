@@ -12,7 +12,7 @@ from app.domain.fingerprint import FingerprintInput, build_fingerprint, normaliz
 from app.domain.segments import classify_segment
 from app.domain.signals import detect_opex, parse_cap_and_noi
 from app.domain.list_card import list_card_changed
-from app.domain.pricing import normalize_listing_price
+from app.domain.pricing import normalize_listing_price, sanitize_price_per_sqm
 from app.scrapers.base import RawListing
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,13 @@ def upsert_listing(
     )
     raw.price = norm.price
     raw.currency = norm.currency or raw.currency
-    raw.price_per_sqm = norm.price_per_sqm
+    raw.price_per_sqm = sanitize_price_per_sqm(
+        price=raw.price,
+        currency=raw.currency,
+        area_sqm=raw.area_sqm,
+        deal_type=raw.deal_type,
+        price_per_sqm=norm.price_per_sqm,
+    )
     if norm.reinterpreted_as_psm:
         finance_extra_hint = {"price_was_psm": True, "price_norm": norm.detail}
     else:

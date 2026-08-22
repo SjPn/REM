@@ -1,4 +1,6 @@
-from app.domain.pricing import normalize_listing_price, sale_psm_suspicious
+import pytest
+
+from app.domain.pricing import normalize_listing_price, sale_psm_suspicious, sanitize_price_per_sqm
 from app.scrapers.http_utils import is_kyiv_region_url, parse_price, parse_price_per_sqm
 
 
@@ -103,6 +105,32 @@ def test_sale_high_psm_suspicious():
     )
     assert norm.suspicious_psm
     assert sale_psm_suspicious(25_000)
+
+
+def test_sanitize_price_per_sqm_when_field_equals_total():
+    from app.domain.pricing import sanitize_price_per_sqm
+
+    fixed = sanitize_price_per_sqm(
+        price=781,
+        currency="USD",
+        area_sqm=140,
+        deal_type="rent",
+        price_per_sqm=781,
+    )
+    assert fixed == pytest.approx(5.5786, rel=1e-3)
+
+
+def test_effective_listing_psm_usd_ignores_mislabeled_field():
+    from app.domain.pricing import effective_listing_psm_usd
+
+    psm = effective_listing_psm_usd(
+        781,
+        "USD",
+        140,
+        deal_type="rent",
+        price_per_sqm=781,
+    )
+    assert psm == pytest.approx(5.58, rel=0.01)
 
 
 def test_kyiv_url_filter():

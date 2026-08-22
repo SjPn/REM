@@ -262,7 +262,7 @@ def fix_prices() -> None:
 
     from app.db.models import Listing
     from app.domain.market_stats import to_usd
-    from app.domain.pricing import normalize_listing_price, psm_suspicious
+    from app.domain.pricing import normalize_listing_price, psm_suspicious, sanitize_price_per_sqm
     from app.domain.signals import listing_psm_usd
 
     init_db()
@@ -287,7 +287,16 @@ def fix_prices() -> None:
                 lst.price = norm.price
             if norm.currency:
                 lst.currency = norm.currency
-            if norm.price_per_sqm is not None:
+            fixed_psm = sanitize_price_per_sqm(
+                price=lst.price,
+                currency=lst.currency,
+                area_sqm=lst.area_sqm,
+                deal_type=lst.deal_type,
+                price_per_sqm=norm.price_per_sqm,
+            )
+            if fixed_psm is not None:
+                lst.price_per_sqm = fixed_psm
+            elif norm.price_per_sqm is not None:
                 lst.price_per_sqm = norm.price_per_sqm
 
             if norm.detail == "text_total_and_psm":
@@ -298,12 +307,17 @@ def fix_prices() -> None:
                 extra["price_was_psm"] = True
                 extra["price_norm"] = norm.detail
             elif extra.get("price_was_psm") and (lst.deal_type or "") == "rent":
-                psm = listing_psm_usd(lst.price, lst.currency, lst.area_sqm)
-                if psm is not None and psm > 50:
-                    # Bad expand of a monthly total — roll back using stored rate if sane
+                psm = listing_psm_usd(
+                    lst.price,
+                    lst.currency,
+                    lst.area_sqm,
+                    deal_type=lst.deal_type,
+                    price_per_sqm=lst.price_per_sqm,
+                )
+                if psm is not None and psm > 70:
                     rate = lst.price_per_sqm
                     rate_usd = to_usd(float(rate), lst.currency) if rate is not None else None
-                    if rate is not None and rate_usd is not None and rate_usd <= 50 and lst.area_sqm:
+                    if rate is not None and rate_usd is not None and rate_usd <= 70 and lst.area_sqm:
                         lst.price = round(float(rate) * float(lst.area_sqm), 2)
                         extra["price_norm"] = "rollback_reexpand_sane_rate"
                     else:
@@ -311,7 +325,13 @@ def fix_prices() -> None:
                         extra["price_norm"] = "clear_bad_expand"
                         extra["price_suspicious"] = True
 
-            psm_now = listing_psm_usd(lst.price, lst.currency, lst.area_sqm)
+            psm_now = listing_psm_usd(
+                lst.price,
+                lst.currency,
+                lst.area_sqm,
+                deal_type=lst.deal_type,
+                price_per_sqm=lst.price_per_sqm,
+            )
             if psm_suspicious(lst.deal_type, psm_now) or norm.suspicious_psm:
                 extra["price_suspicious"] = True
             else:

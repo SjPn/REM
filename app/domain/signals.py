@@ -247,22 +247,23 @@ def parse_cap_and_noi(text: str | None) -> dict[str, float]:
     return out
 
 
-def listing_psm_usd(price: float | None, currency: str | None, area: float | None) -> float | None:
-    if price is None or area is None:
-        return None
-    try:
-        p, a = float(price), float(area)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(p) or not math.isfinite(a) or p <= 0 or a <= 0:
-        return None
-    usd = to_usd(p, currency)
-    if usd is None or not math.isfinite(usd):
-        return None
-    psm = usd / a
-    if not math.isfinite(psm) or psm <= 0:
-        return None
-    return psm
+def listing_psm_usd(
+    price: float | None,
+    currency: str | None,
+    area: float | None,
+    *,
+    deal_type: str | None = None,
+    price_per_sqm: float | None = None,
+) -> float | None:
+    from app.domain.pricing import effective_listing_psm_usd
+
+    return effective_listing_psm_usd(
+        price,
+        currency,
+        area,
+        deal_type=deal_type,
+        price_per_sqm=price_per_sqm,
+    )
 
 
 @dataclass
@@ -286,9 +287,12 @@ def below_market_hint(
     median_by_district: dict[str, float],
     city_median: float | None,
     threshold: float = 0.12,
+    price_per_sqm: float | None = None,
 ) -> MarketHint:
     """True if listing $/m² is meaningfully below district (or city) median."""
-    psm = listing_psm_usd(price, currency, area)
+    psm = listing_psm_usd(
+        price, currency, area, deal_type=deal_type, price_per_sqm=price_per_sqm
+    )
     dist = normalize_district(district) or extract_district(address, title, city)
     ref = median_by_district.get(dist) if dist else None
     if ref is None:

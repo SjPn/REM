@@ -10,7 +10,7 @@ from app.domain.market_stats import to_usd
 
 # Rent $/m²·мес: below floor → likely the "price" is already a rate; above ceiling → outlier.
 _RENT_PSM_FLOOR_USD = 3.0
-_RENT_PSM_CEILING_USD = 50.0
+_RENT_PSM_CEILING_USD = 70.0
 # Sale: expand only when implied $/m² is absurdly low (price field is clearly a rate).
 _SALE_PSM_FLOOR_USD = 80.0
 # Plausible Kyiv commercial sale band ($/м²). Keep in sync with market_stats._SALE_PSM_*.
@@ -82,6 +82,83 @@ def psm_suspicious(deal_type: str | None, psm_usd: float | None) -> bool:
     if (deal_type or "").lower() == "sale":
         return sale_psm_suspicious(psm_usd)
     return False
+
+
+def implied_psm_native(
+    price: float | None,
+    currency: str | None,
+    area_sqm: float | None,
+) -> float | None:
+    if price is None or area_sqm is None:
+        return None
+    try:
+        p, a = float(price), float(area_sqm)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(p) or not math.isfinite(a) or p <= 0 or a <= 0:
+        return None
+    return round(p / a, 4)
+
+
+def sanitize_price_per_sqm(
+    *,
+    price: float | None,
+    currency: str | None,
+    area_sqm: float | None,
+    deal_type: str | None,
+    price_per_sqm: float | None,
+) -> float | None:
+    """
+    Drop mislabeled totals in price_per_sqm; prefer total/area when consistent.
+    Common bug: monthly rent copied into price_per_sqm (781 $/мес shown as 781 $/м²).
+    """
+    implied = implied_psm_native(price, currency, area_sqm)
+    if implied is None:
+        return price_per_sqm
+    if price_per_sqm is None:
+        return implied
+    try:
+        psm = float(price_per_sqm)
+        p = float(price) if price is not None else None
+    except (TypeError, ValueError):
+        return price_per_sqm
+    if p is not None and abs(psm - p) / max(p, 1.0) < 0.02:
+        return implied
+    implied_usd = to_usd(implied, currency)
+    stored_usd = to_usd(psm, currency)
+    if implied_usd is None:
+        return price_per_sqm
+    if stored_usd is None:
+        return implied
+    if (deal_type or "").lower() == "rent" and stored_usd > _RENT_PSM_CEILING_USD:
+        if implied_usd <= _RENT_PSM_CEILING_USD:
+            return implied
+    if abs(stored_usd - implied_usd) / max(implied_usd, 0.5) > 0.35:
+        return implied
+    return price_per_sqm
+
+
+def effective_listing_psm_usd(
+    price: float | None,
+    currency: str | None,
+    area: float | None,
+    *,
+    deal_type: str | None = None,
+    price_per_sqm: float | None = None,
+) -> float | None:
+    native = sanitize_price_per_sqm(
+        price=price,
+        currency=currency,
+        area_sqm=area,
+        deal_type=deal_type,
+        price_per_sqm=price_per_sqm,
+    )
+    if native is None:
+        return None
+    usd = to_usd(native, currency)
+    if usd is None or not math.isfinite(usd) or usd <= 0:
+        return None
+    return usd
 
 
 def normalize_listing_price(
@@ -204,4 +281,12 @@ def normalize_listing_price(
 
     if psm_field is None and explicit is not None:
         psm_field = explicit
+    psm_field = sanitize_price_per_sqm(
+        price=price,
+        currency=currency or cur,
+        area_sqm=area_sqm,
+        deal_type=deal_type,
+        price_per_sqm=psm_field,
+    )
+    suspicious = psm_suspicious(deal_type, to_usd(implied, cur))
     return PriceNorm(price, currency, psm_field, False, suspicious, "")

@@ -26,6 +26,7 @@ from app.domain.market_stats import (
     rough_yield_by_district,
     to_usd,
 )
+from app.domain.pricing import effective_listing_psm_usd, sanitize_price_per_sqm
 from app.domain.seller_stress import compute_seller_stress
 from app.domain.signals import (
     OPEX_UNKNOWN,
@@ -123,7 +124,9 @@ def _sort_listings_in_memory(rows: list[Listing], sort: str) -> list[Listing]:
         return (v is None, v if v is not None else 0.0)
 
     def key_psm(x: Listing):
-        v = listing_psm_usd(x.price, x.currency, x.area_sqm)
+        v = listing_psm_usd(
+            x.price, x.currency, x.area_sqm, deal_type=x.deal_type, price_per_sqm=x.price_per_sqm
+        )
         return (v is None, v if v is not None else 0.0)
 
     def key_seen(x: Listing):
@@ -205,23 +208,23 @@ def _listing_psm_value(
     price: float | None,
     area_sqm: float | None,
     price_per_sqm: float | None = None,
+    deal_type: str | None = None,
+    currency: str | None = None,
 ) -> float | None:
-    if price_per_sqm is not None:
-        try:
-            stored = float(price_per_sqm)
-            if math.isfinite(stored) and stored > 0:
-                return stored
-        except (TypeError, ValueError):
-            pass
-    if price is None or area_sqm is None:
+    native = sanitize_price_per_sqm(
+        price=price,
+        currency=currency,
+        area_sqm=area_sqm,
+        deal_type=deal_type,
+        price_per_sqm=price_per_sqm,
+    )
+    if native is None:
         return None
-    try:
-        p, a = float(price), float(area_sqm)
-        if not math.isfinite(p) or not math.isfinite(a) or p <= 0 or a <= 0:
-            return None
-        return p / a
-    except (TypeError, ValueError):
-        return None
+    cur = (currency or "USD").upper()
+    if cur == "USD":
+        return native
+    usd = to_usd(native, currency)
+    return usd if usd is not None else native
 
 
 def _fmt_listing_psm(
@@ -231,16 +234,21 @@ def _fmt_listing_psm(
     deal_type: str | None = None,
     price_per_sqm: float | None = None,
 ) -> str:
-    value = _listing_psm_value(price, area_sqm, price_per_sqm)
-    if value is None:
+    usd = effective_listing_psm_usd(
+        price,
+        currency,
+        area_sqm,
+        deal_type=deal_type,
+        price_per_sqm=price_per_sqm,
+    )
+    if usd is None:
         return ""
-    cur = (currency or "").upper()
     suffix = "/м²·мес" if (deal_type or "").lower() == "rent" else "/м²"
-    if value >= 100:
-        num = f"{value:,.0f}".replace(",", " ")
+    if usd >= 100:
+        num = f"{usd:,.0f}".replace(",", " ")
     else:
-        num = f"{value:.1f}"
-    return f"{num} {cur}{suffix}".strip()
+        num = f"{usd:.1f}"
+    return f"{num} ${suffix}".strip()
 
 
 _DEAL_TYPE_UA = {"sale": "Продажа", "rent": "Аренда"}
@@ -446,6 +454,7 @@ def _annotate_listings(
             city=x.city,
             median_by_district=med_map,
             city_median=city_med,
+            price_per_sqm=x.price_per_sqm,
         )
         digits = phone_digits(x.phone)
         seller = classify_seller(

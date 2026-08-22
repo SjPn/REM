@@ -45,7 +45,7 @@ def district_label_ru(name: str | None) -> str:
 # Outlier guards (USD / m²). Kyiv commercial sale: below ~$450 or above ~$10k is noise.
 _SALE_PSM_MIN, _SALE_PSM_MAX = 450.0, 10_000.0
 # Kyiv commercial rent: >~$50/m²·мес is almost only prime retail; treat as outlier.
-_RENT_PSM_MIN, _RENT_PSM_MAX = 3.0, 50.0
+_RENT_PSM_MIN, _RENT_PSM_MAX = 3.0, 70.0
 
 
 def to_usd(price: float, currency: str | None) -> float | None:
