@@ -6,21 +6,31 @@
   <div class="page-head">
     <div>
       <h1 class="page-title">Сделки</h1>
-      <p class="page-lead">Оценка исчезнувших объявлений: похоже на сделку или просто сняли. Это оценка, не факт.</p>
+      <p class="page-lead">
+        Объявление исчезло с площадки → REM оценивает: сделка или просто сняли.
+        <strong>Не участвует в медиане активных.</strong> Это оценка, не факт продажи.
+      </p>
     </div>
   </div>
 
+  <nav class="seg-tabs" aria-label="Период">
+    <a class="{% if hours == 24 %}is-on{% endif %}" href="/deals?bucket={{ bucket }}&deal_type={{ deal_type }}&hours=24">Сутки</a>
+    <a class="{% if hours == 168 %}is-on{% endif %}" href="/deals?bucket={{ bucket }}&deal_type={{ deal_type }}&hours=168">Неделя</a>
+    <a class="{% if hours == 0 %}is-on{% endif %}" href="/deals?bucket={{ bucket }}&deal_type={{ deal_type }}&hours=0">Всё время</a>
+    <span class="muted seg-hint">{{ period_label }}</span>
+  </nav>
+
   <nav class="seg-tabs" aria-label="Категории">
-    <a class="{% if bucket == 'likely_deal' %}is-on{% endif %}" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">
+    <a class="{% if bucket == 'likely_deal' %}is-on{% endif %}" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}&hours={{ hours }}">
       Похоже на сделку <b>{{ counts.likely_deal }}</b>
     </a>
-    <a class="{% if bucket == 'ambiguous' %}is-on{% endif %}" href="/deals?bucket=ambiguous&deal_type={{ deal_type }}">
+    <a class="{% if bucket == 'ambiguous' %}is-on{% endif %}" href="/deals?bucket=ambiguous&deal_type={{ deal_type }}&hours={{ hours }}">
       Неясно <b>{{ counts.ambiguous }}</b>
     </a>
-    <a class="{% if bucket == 'likely_withdrawn' %}is-on{% endif %}" href="/deals?bucket=likely_withdrawn&deal_type={{ deal_type }}">
+    <a class="{% if bucket == 'likely_withdrawn' %}is-on{% endif %}" href="/deals?bucket=likely_withdrawn&deal_type={{ deal_type }}&hours={{ hours }}">
       Скорее сняли <b>{{ counts.likely_withdrawn }}</b>
     </a>
-    <a class="{% if not bucket %}is-on{% endif %}" href="/deals?bucket=&deal_type={{ deal_type }}">
+    <a class="{% if not bucket %}is-on{% endif %}" href="/deals?bucket=&deal_type={{ deal_type }}&hours={{ hours }}">
       Все <b>{{ counts.all }}</b>
     </a>
   </nav>

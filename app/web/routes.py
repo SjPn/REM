@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.db.models import DealHypothesis, Listing, Property, PropertyEvent, WatchFilter
 from app.domain.fingerprint import phone_digits
-from app.domain.listing_stats import is_excluded_from_stats
+from app.domain.listing_stats import is_excluded_from_stats, set_stats_exclusion
 from app.domain.market_history import ensure_today_snapshot, series_for_charts
 from app.domain.market_stats import (
     KYIV_DISTRICTS,
@@ -27,7 +27,7 @@ from app.domain.market_stats import (
     rough_yield_by_district,
     to_usd,
 )
-from app.domain.listing_stats import is_excluded_from_stats, set_stats_exclusion
+from app.domain.deals_preview import deal_bucket_counts, recent_deal_hypotheses
 from app.domain.pricing import effective_listing_psm_usd, sanitize_price_per_sqm
 from app.domain.ttl_cache import cache_clear
 from app.domain.seller_stress import compute_seller_stress
@@ -763,6 +763,13 @@ def dashboard(
         )
         signals = _annotate_listings(db, listings, market)
 
+    deal_preview = [
+        _deal_card(db, h)
+        for h in recent_deal_hypotheses(
+            db, deal_type=deal_type, bucket="likely_deal", hours=168, limit=5
+        )
+    ]
+
     segments = [
         r[0]
         for r in db.execute(
@@ -838,6 +845,7 @@ def dashboard(
             "inventory": inventory,
             "stats_excluded_n": stats_excluded_n,
             "stats_excluded_filter": stats_excluded_filter,
+            "deal_preview": deal_preview,
             "mode_rows": mode_rows,
         },
     )
@@ -967,6 +975,14 @@ def market_page(
     compare_by = {r["district"]: r for r in compare_rows}
     yields = rough_yield_by_district(market)
     yield_by = {r["district"]: r for r in yields["rows"]}
+    activity_stats = activity_summary(db, hours=24, deal_type=mode)
+    deal_counts = deal_bucket_counts(db, deal_type=mode, hours=168)
+    deal_preview = [
+        _deal_card(db, h)
+        for h in recent_deal_hypotheses(
+            db, deal_type=mode, bucket="likely_deal", hours=168, limit=4
+        )
+    ]
     return templates.TemplateResponse(
         request,
         "market.html",
@@ -982,6 +998,9 @@ def market_page(
             "yields": yields,
             "yield_by": yield_by,
             "stats_excluded_n": stats_excluded_n,
+            "activity_stats": activity_stats,
+            "deal_counts": deal_counts,
+            "deal_preview": deal_preview,
         },
     )
 
@@ -1065,38 +1084,29 @@ def deals_page(
     db: Session = Depends(get_db),
     bucket: str | None = Query("likely_deal"),
     deal_type: str = Query("sale", pattern="^(sale|rent)$"),
+    hours: int = Query(168, ge=0, le=8760),
 ):
-    q = select(DealHypothesis).order_by(
-        DealHypothesis.score.desc(), DealHypothesis.created_at.desc()
+    since = None
+    if hours > 0:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    q = (
+        select(DealHypothesis)
+        .join(Listing, DealHypothesis.listing_id == Listing.id)
+        .where(Listing.deal_type == deal_type)
+        .order_by(DealHypothesis.score.desc(), DealHypothesis.created_at.desc())
     )
     if bucket:
         q = q.where(DealHypothesis.bucket == bucket)
-    hyps = db.scalars(q.limit(200)).all()
+    if since is not None:
+        q = q.where(DealHypothesis.created_at >= since)
+    hyps = db.scalars(q.limit(100)).all()
     cards = [_deal_card(db, h) for h in hyps]
-    cards = [
-        c
-        for c in cards
-        if c["listing"] is not None and c["listing"].deal_type == deal_type
-    ][:100]
 
-    def _count_for(bucket_name: str | None) -> int:
-        hq = select(DealHypothesis)
-        if bucket_name:
-            hq = hq.where(DealHypothesis.bucket == bucket_name)
-        n = 0
-        for h in db.scalars(hq.limit(500)).all():
-            card = _deal_card(db, h)
-            lst = card["listing"]
-            if lst is not None and lst.deal_type == deal_type:
-                n += 1
-        return n
-
-    counts = {
-        "likely_deal": _count_for("likely_deal"),
-        "ambiguous": _count_for("ambiguous"),
-        "likely_withdrawn": _count_for("likely_withdrawn"),
-        "all": _count_for(None),
-    }
+    counts = deal_bucket_counts(db, deal_type=deal_type, hours=hours if hours > 0 else None)
+    period_label = {0: "всё время", 24: "за сутки", 168: "за неделю"}.get(
+        hours, f"за {hours} ч"
+    )
     return templates.TemplateResponse(
         request,
         "deals.html",
@@ -1105,6 +1115,8 @@ def deals_page(
             "bucket": bucket or "",
             "counts": counts,
             "deal_type": deal_type,
+            "hours": hours,
+            "period_label": period_label,
         },
     )
 

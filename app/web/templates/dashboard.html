@@ -15,6 +15,7 @@
         {% endif %}
         · медиана {{ fmt_psm(market_slice.city_median_psm, deal_type) }}
         {% if deal_type == 'rent' and rent_slice_label %} · {{ rent_slice_label }}{% endif %}
+        <span class="muted"> · только активные в сети</span>
       </p>
     </div>
   </div>
@@ -24,7 +25,7 @@
       <div class="ov-n">{{ activity_stats.new_listings }}</div>
       <div class="ov-l">Новые за сутки</div>
     </a>
-    <a class="ov-card is-accent {% if activity_filter == 'vanished' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=vanished">
+    <a class="ov-card is-accent {% if activity_filter == 'vanished' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=vanished" title="Исчезли с площадок за сутки — ещё без оценки">
       <div class="ov-n">{{ activity_stats.vanished }}</div>
       <div class="ov-l">Исчезли</div>
     </a>
@@ -32,7 +33,7 @@
       <div class="ov-n">{{ activity_stats.price_drops }}</div>
       <div class="ov-l">Уценили</div>
     </a>
-    <a class="ov-card is-accent" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">
+    <a class="ov-card is-deal" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}" title="Оценка исчезнувших: похоже на сделку или сняли">
       <div class="ov-n">{{ activity_stats.likely_deals }}</div>
       <div class="ov-l">Похоже на сделку</div>
     </a>
@@ -45,6 +46,26 @@
     </a>
     {% endif %}
   </section>
+
+  {% if deal_preview %}
+  <section class="deal-preview-section" aria-label="Возможные сделки">
+    <div class="section-head tight">
+      <h2>Возможные сделки</h2>
+      <span class="muted">Исчезли с площадок · не влияют на медиану активных</span>
+      <a class="link-more" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">Все сделки →</a>
+    </div>
+    <div class="deal-preview-list">
+      {% include "_deal_preview_cards.html" %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if activity_filter == 'vanished' %}
+  <p class="filter-note">
+    Список исчезнувших за сутки (сырые события). Оценка «похоже на сделку» —
+    <a href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">в разделе «Сделки»</a>.
+  </p>
+  {% endif %}
 
   {% if mode_rows %}
   <section class="district-preview">

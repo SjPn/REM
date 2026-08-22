@@ -1,0 +1,15 @@
+{% for c in deal_preview %}
+  {% set h = c.hyp %}
+  {% set lst = c.listing %}
+  <a class="deal-preview-card" href="/deals/{{ h.id }}">
+    <div class="deal-preview-score">{{ h.score }}</div>
+    <div class="deal-preview-body">
+      <div class="deal-preview-title">{{ (lst.title if lst else None) or 'Объект #' ~ h.id }}</div>
+      <div class="deal-preview-meta">
+        {% if lst and lst.price %}<span>{{ fmt_price(lst.price, lst.currency) }}</span>{% endif %}
+        {% if lst and lst.area_sqm %}<span class="muted">{{ lst.area_sqm }} м²</span>{% endif %}
+        <span class="tag {{ h.bucket }}">{{ ua_bucket(h.bucket) }}</span>
+      </div>
+    </div>
+  </a>
+{% endfor %}

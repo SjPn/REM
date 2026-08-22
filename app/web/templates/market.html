@@ -15,6 +15,7 @@
         {% endif %}
         · медиана {{ fmt_psm(market_slice.city_median_psm, mode) }}
         · по {{ market_slice.city_count }} объявл. в расчёте
+        <span class="muted"> · только активные</span>
         {% if stats_excluded_n %}
           · <a class="link-more" href="/?deal_type={{ mode }}&stats_excluded=1" title="Показать объявления, исключённые из медиан">{{ stats_excluded_n }} вне статистики →</a>
         {% endif %}
@@ -45,6 +46,36 @@
         · {{ yields.note }}
       </div>
     </div>
+  </section>
+
+  <section class="deal-market-panel" aria-label="Исчезнувшие объявления">
+    <div class="section-head tight">
+      <h2>Исчезли с площадок</h2>
+      <span class="muted">Отдельно от медианы · пропали = возможная сделка</span>
+    </div>
+    <div class="deal-market-stats">
+      <a class="deal-stat" href="/?deal_type={{ mode }}&activity=vanished">
+        <span class="deal-stat-n">{{ activity_stats.vanished }}</span>
+        <span class="deal-stat-l">за сутки (сырые)</span>
+      </a>
+      <a class="deal-stat is-deal" href="/deals?bucket=likely_deal&deal_type={{ mode }}">
+        <span class="deal-stat-n">{{ deal_counts.likely_deal }}</span>
+        <span class="deal-stat-l">похоже на сделку · нед.</span>
+      </a>
+      <a class="deal-stat" href="/deals?bucket=ambiguous&deal_type={{ mode }}">
+        <span class="deal-stat-n">{{ deal_counts.ambiguous }}</span>
+        <span class="deal-stat-l">неясно · нед.</span>
+      </a>
+      <a class="deal-stat" href="/deals?bucket=likely_withdrawn&deal_type={{ mode }}">
+        <span class="deal-stat-n">{{ deal_counts.likely_withdrawn }}</span>
+        <span class="deal-stat-l">скорее сняли · нед.</span>
+      </a>
+    </div>
+    {% if deal_preview %}
+    <div class="deal-preview-list compact">
+      {% include "_deal_preview_cards.html" %}
+    </div>
+    {% endif %}
   </section>
 
   <section class="section">
