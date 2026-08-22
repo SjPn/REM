@@ -17,3 +17,4 @@ typer>=0.15.0
 pytest>=8.3.0
 pytest-asyncio>=0.24.0
 apscheduler>=3.10.4
+curl_cffi>=0.7.0

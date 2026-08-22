@@ -736,6 +736,37 @@ def stats() -> None:
     rprint(data)
 
 
+@app.command("probe-olx")
+def probe_olx(pages: int = 1) -> None:
+    """Проверка доступа к OLX (CloudFront / URL / парсер)."""
+    from app.config import get_settings
+    from app.scrapers.http_utils import HttpClient
+    from app.scrapers.olx import OlxScraper
+
+    settings = get_settings()
+    if not settings.crawl_tls_impersonate:
+        rprint("[yellow]CRAWL_TLS_IMPERSONATE пуст — OLX часто отвечает 403[/yellow]")
+    client = HttpClient()
+    scraper = OlxScraper(client)
+    total = 0
+    try:
+        for item in scraper.crawl(max_pages=max(1, pages), needs_detail=lambda _: False):
+            total += 1
+            if total <= 3:
+                title = (item.title or "")[:60].encode("ascii", "replace").decode()
+                rprint(
+                    f"[green]{item.external_id}[/green] {item.price} {item.currency} - {title}"
+                )
+    finally:
+        client.close()
+    if total:
+        rprint(f"[green]OLX OK[/green]: {total} cards")
+    else:
+        rprint(
+            "[red]OLX: 0 cards[/red] — проверьте CRAWL_TLS_IMPERSONATE=chrome131 и/или HTTP_PROXY"
+        )
+
+
 @app.command()
 def serve(
     host: str = "127.0.0.1",

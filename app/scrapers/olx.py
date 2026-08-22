@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
-import time
 from collections.abc import Callable, Iterator
 from urllib.parse import urljoin
 
@@ -27,15 +27,15 @@ from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area,
 
 logger = logging.getLogger(__name__)
 
-# OLX often blocks datacenter IPs; keep multiple URL candidates.
+# OLX moved from *-pomescheniy/* to *-kommercheskoy-nedvizhimosti/* (2025–2026).
 OLX_SEARCH = {
     DealType.SALE: [
-        "https://www.olx.ua/uk/nedvizhimost/kommercheskaya-nedvizhimost/prodazha-pomescheniy/kiev/",
-        "https://www.olx.ua/uk/nedvizhimost/kiev/kommercheskaya-nedvizhimost/prodazha-pomescheniy/",
+        "https://www.olx.ua/uk/nedvizhimost/kommercheskaya-nedvizhimost/prodazha-kommercheskoy-nedvizhimosti/kiev/",
+        "https://www.olx.ua/uk/nedvizhimost/kiev/kommercheskaya-nedvizhimost/prodazha-kommercheskoy-nedvizhimosti/",
     ],
     DealType.RENT: [
-        "https://www.olx.ua/uk/nedvizhimost/kommercheskaya-nedvizhimost/arenda-pomescheniy/kiev/",
-        "https://www.olx.ua/uk/nedvizhimost/kiev/kommercheskaya-nedvizhimost/arenda-pomescheniy/",
+        "https://www.olx.ua/uk/nedvizhimost/kommercheskaya-nedvizhimost/arenda-kommercheskoy-nedvizhimosti/kiev/",
+        "https://www.olx.ua/uk/nedvizhimost/kiev/kommercheskaya-nedvizhimost/arenda-kommercheskoy-nedvizhimosti/",
     ],
 }
 
@@ -65,6 +65,11 @@ class OlxScraper:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("OLX list candidate failed %s: %s", candidate, exc)
             if not html:
+                if not self.settings.crawl_tls_impersonate:
+                    logger.error(
+                        "OLX: все URL недоступны. Задайте CRAWL_TLS_IMPERSONATE=chrome131 "
+                        "(CloudFront блокирует httpx) или HTTP_PROXY."
+                    )
                 continue
             for page in range(1, pages + 1):
                 url = base_url if page == 1 else f"{base_url}?page={page}"
@@ -78,6 +83,8 @@ class OlxScraper:
                 if not items:
                     break
                 batch.extend(items)
+            if batch:
+                logger.info("OLX %s: %s cards from list pages", deal_type.value, len(batch))
             yield from enrich_listings(self, batch, needs_detail=needs_detail)
 
     def fetch_detail(self, listing: RawListing) -> RawListing:
@@ -130,6 +137,104 @@ class OlxScraper:
         return listing
 
     def _parse_list(self, html: str, deal_type: DealType) -> list[RawListing]:
+        items = self._parse_prerendered_state(html, deal_type)
+        if items:
+            return items
+        items = self._parse_list_links(html, deal_type)
+        if not items:
+            logger.warning("OLX: no listing cards parsed (markup/anti-bot may block)")
+        return items
+
+    def _parse_prerendered_state(self, html: str, deal_type: DealType) -> list[RawListing]:
+        m = re.search(r'window\.__PRERENDERED_STATE__=\s*"(\{.*\})"\s*;', html)
+        if not m:
+            return []
+        try:
+            raw = m.group(1)
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                raw = raw.encode("utf-8").decode("unicode_escape")
+                data = json.loads(raw)
+            ads = data.get("listing", {}).get("listing", {}).get("ads") or []
+        except (json.JSONDecodeError, UnicodeError, KeyError, TypeError):
+            logger.warning("OLX: failed to decode __PRERENDERED_STATE__")
+            return []
+        items: list[RawListing] = []
+        for ad in ads:
+            if not isinstance(ad, dict):
+                continue
+            listing = self._ad_to_raw(ad, deal_type)
+            if listing is not None:
+                items.append(listing)
+        return items
+
+    def _ad_to_raw(self, ad: dict, deal_type: DealType) -> RawListing | None:
+        ext_id = ad.get("id")
+        url = ad.get("url") or ad.get("urlPath")
+        title = (ad.get("title") or "").strip()
+        if not ext_id or not url or len(title) < 8:
+            return None
+        if not str(url).startswith("http"):
+            url = urljoin("https://www.olx.ua", str(url))
+
+        price_obj = ad.get("price") or {}
+        regular = price_obj.get("regularPrice") or {}
+        price = regular.get("value")
+        currency = regular.get("currencyCode") or "UAH"
+
+        area = None
+        floor = None
+        for param in ad.get("params") or []:
+            if not isinstance(param, dict):
+                continue
+            key = param.get("key")
+            norm = param.get("normalizedValue")
+            if key == "total_area" and norm not in (None, ""):
+                try:
+                    area = float(norm)
+                except (TypeError, ValueError):
+                    area = parse_area(str(param.get("value") or ""))
+            elif key == "floor" and norm not in (None, ""):
+                try:
+                    floor = int(float(norm))
+                except (TypeError, ValueError):
+                    floor = None
+
+        loc = ad.get("location") or {}
+        district = loc.get("districtName")
+        city = loc.get("cityName") or "Київ"
+        address_parts = [p for p in (district, city) if p]
+        address_raw = ", ".join(address_parts) if address_parts else city
+
+        geo = ad.get("map") or {}
+        lat = geo.get("lat")
+        lon = geo.get("lon")
+
+        return RawListing(
+            source=self.source,
+            external_id=str(ext_id),
+            url=str(url).split("?")[0],
+            deal_type=deal_type.value,
+            title=title[:500],
+            description=(ad.get("description") or "")[:5000] or None,
+            property_type=guess_property_type(f"{title} {url}"),
+            price=float(price) if price is not None else None,
+            currency=str(currency).upper() if currency else "UAH",
+            area_sqm=area,
+            floor=floor,
+            address_raw=address_raw,
+            city=city,
+            lat=float(lat) if lat is not None else None,
+            lon=float(lon) if lon is not None else None,
+            extra={
+                "snippet": title[:400],
+                "olx_status": ad.get("status"),
+                "seller": (ad.get("user") or {}).get("name"),
+            },
+        )
+
+    def _parse_list_links(self, html: str, deal_type: DealType) -> list[RawListing]:
         soup = BeautifulSoup(html, "lxml")
         seen: set[str] = set()
         items: list[RawListing] = []
@@ -168,8 +273,6 @@ class OlxScraper:
                     extra={"snippet": text[:400]},
                 )
             )
-        if not items:
-            logger.warning("OLX: no listing cards parsed (markup/anti-bot may block)")
         return items
 
     @staticmethod

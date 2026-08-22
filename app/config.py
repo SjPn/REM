@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     # Residential / datacenter proxy for crawl (http://user:pass@host:port or socks5://...)
     # Empty = direct connection. Secret — set only in Coolify / local .env, never commit.
     http_proxy: str | None = None
+    # Chrome TLS fingerprint for OLX (CloudFront WAF). Empty = httpx only.
+    crawl_tls_impersonate: str = "chrome131"
     # Fixed UA if set; empty = rotate realistic Chrome/Edge/Firefox pool per session.
     user_agent: str = ""
     log_level: str = "INFO"
