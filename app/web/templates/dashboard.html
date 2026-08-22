@@ -15,6 +15,7 @@
         {% endif %}
         · медиана {{ fmt_psm(market_slice.city_median_psm, deal_type) }}
         {% if deal_type == 'rent' and rent_slice_label %} · {{ rent_slice_label }}{% endif %}
+        {% if stats_excluded_n %} · <span title="Исключены из медиан и средних">{{ stats_excluded_n }} ✓ не в статистике</span>{% endif %}
       </p>
     </div>
   </div>
@@ -127,11 +128,12 @@
         {% if deal_type == 'rent' %}
         <label class="f-label" for="f-opex">OPEX в цене</label>
         <select id="f-opex" name="opex">
-          <option value="" {% if not opex %}selected{% endif %}>Авто</option>
+          <option value="" {% if not opex %}selected{% endif %}>Авто (медиана)</option>
           <option value="without" {% if opex == 'without' %}selected{% endif %}>Без OPEX ({{ market.rent_without_opex.city_count }})</option>
           <option value="with" {% if opex == 'with' %}selected{% endif %}>С OPEX ({{ market.rent_with_opex.city_count }})</option>
           <option value="unknown" {% if opex == 'unknown' %}selected{% endif %}>Не указан ({{ market.rent_opex_unknown.city_count }})</option>
         </select>
+        <p class="f-hint muted">OPEX — из текста объявления. Без детальной страницы часто «не указан»; медианы считаются без карточек с ✓ «не в статистике».</p>
         {% endif %}
 
         <div class="f-block">
@@ -208,7 +210,14 @@
         <div class="listing-list">
           {% for x in listings %}
           {% set sig = signals.get(x.id, {}) %}
-          <article class="listing {% if sig.below_market %}is-dealish{% endif %}">
+          <article class="listing {% if sig.below_market %}is-dealish{% endif %}{% if x.exclude_from_stats %} is-stats-excluded{% endif %}">
+            <form method="post" action="/listings/{{ x.id }}/stats-exclude" class="stats-exclude-form" title="Не участвует в медианах и средних. Снимите галочку, если цена верная.">
+              <input type="hidden" name="exclude" id="ex-{{ x.id }}" value="{% if x.exclude_from_stats %}1{% else %}0{% endif %}">
+              <label class="stats-exclude-label">
+                <input type="checkbox" {% if x.exclude_from_stats %}checked{% endif %} onchange="document.getElementById('ex-{{ x.id }}').value = this.checked ? '1' : '0'; this.form.submit();">
+                <span>не в статистике</span>
+              </label>
+            </form>
             <div class="listing-main">
               <a class="listing-title" href="{{ x.url }}" target="_blank" rel="noopener noreferrer">
                 {{ x.title or 'Без названия' }}
@@ -217,13 +226,13 @@
                 <span class="tag">{{ x.source }}</span>
                 {% if x.property_type %}<span class="tag">{{ x.property_type }}</span>{% endif %}
                 {% if sig.seller %}<span class="tag seller-{{ sig.seller }}">{{ ua_seller(sig.seller) }}</span>{% endif %}
-                {% if sig.opex and sig.opex != 'unknown' %}
-                  <span class="tag opex-{{ sig.opex }}">{{ ua_opex(sig.opex) }}</span>
+                {% if deal_type == 'rent' %}
+                  <span class="tag opex-{{ sig.opex or 'unknown' }}">{{ ua_opex(sig.opex or 'unknown') }}</span>
                 {% endif %}
               {% if sig.below_market %}
                 <span class="tag below">ниже рынка {{ sig.discount_pct }}%</span>
               {% endif %}
-              {% if sig.price_suspicious %}
+              {% if sig.price_suspicious and not x.exclude_from_stats %}
                 <span class="tag warn">подозрительная цена м²</span>
               {% endif %}
               {% if sig.portals and sig.portals > 1 %}
@@ -239,6 +248,7 @@
               <div class="listing-addr">
                 {% if x.address_raw %}{{ x.address_raw }}{% else %}<span class="warn-text">адрес не найден</span>{% endif %}
                 {% if x.district %} · {{ district_ru(x.district) }}{% endif %}
+                {% if x.floor is not none %} · этаж {{ x.floor }}{% else %} · <span class="warn-text">этаж ?</span>{% endif %}
               </div>
             </div>
             <div class="listing-side">

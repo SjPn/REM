@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.db.models import DealHypothesis, Listing, Property, PropertyEvent, WatchFilter
 from app.domain.fingerprint import phone_digits
+from app.domain.listing_stats import is_excluded_from_stats
 from app.domain.market_history import ensure_today_snapshot, series_for_charts
 from app.domain.market_stats import (
     KYIV_DISTRICTS,
@@ -26,7 +27,9 @@ from app.domain.market_stats import (
     rough_yield_by_district,
     to_usd,
 )
+from app.domain.listing_stats import is_excluded_from_stats, set_stats_exclusion
 from app.domain.pricing import effective_listing_psm_usd, sanitize_price_per_sqm
+from app.domain.ttl_cache import cache_clear
 from app.domain.seller_stress import compute_seller_stress
 from app.domain.signals import (
     OPEX_UNKNOWN,
@@ -34,6 +37,7 @@ from app.domain.signals import (
     OPEX_WITHOUT,
     activity_summary,
     below_market_hint,
+    MarketHint,
     classify_seller,
     listing_ids_for_price_drops,
     listing_ids_for_vanished,
@@ -456,6 +460,8 @@ def _annotate_listings(
             city_median=city_med,
             price_per_sqm=x.price_per_sqm,
         )
+        if is_excluded_from_stats(x):
+            hint = MarketHint(False, None, hint.ref_median_psm, hint.district)
         digits = phone_digits(x.phone)
         seller = classify_seller(
             agency=x.agency,
@@ -477,6 +483,7 @@ def _annotate_listings(
             "noi": extra.get("noi"),
             "opex": opex,
             "price_suspicious": bool(extra.get("price_suspicious")),
+            "excluded_from_stats": is_excluded_from_stats(x),
             "dom_days": _days_on_market(x.first_seen_at),
         }
     return out
@@ -589,6 +596,17 @@ def dashboard(
     activity_stats = activity_summary(db, hours=24, deal_type=deal_type)
     watches = db.scalars(select(WatchFilter).order_by(WatchFilter.created_at.desc()).limit(20)).all()
     inventory = count_active_inventory(db)
+    stats_excluded_n = (
+        db.scalar(
+            select(func.count())
+            .select_from(Listing)
+            .where(
+                Listing.status.in_(["active", "relisted"]),
+                Listing.exclude_from_stats.is_(True),
+            )
+        )
+        or 0
+    )
 
     activity_since = datetime.now(timezone.utc) - timedelta(hours=24)
     activity_ids: list[int] | None = None
@@ -812,9 +830,27 @@ def dashboard(
             "market_slice": market_slice,
             "rent_slice_label": rent_slice_label,
             "inventory": inventory,
+            "stats_excluded_n": stats_excluded_n,
             "mode_rows": mode_rows,
         },
     )
+
+
+@router.post("/listings/{listing_id}/stats-exclude")
+def toggle_stats_exclude(
+    listing_id: int,
+    request: Request,
+    exclude: int = Form(0),
+    db: Session = Depends(get_db),
+):
+    listing = db.get(Listing, listing_id)
+    if listing is None:
+        return RedirectResponse("/", status_code=303)
+    set_stats_exclusion(listing, excluded=bool(exclude), user_action=True)
+    db.commit()
+    cache_clear()
+    target = request.headers.get("referer") or "/"
+    return RedirectResponse(target, status_code=303)
 
 
 @router.post("/watches")

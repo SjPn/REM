@@ -12,6 +12,7 @@ from app.domain.fingerprint import FingerprintInput, build_fingerprint, normaliz
 from app.domain.segments import classify_segment
 from app.domain.signals import detect_opex, parse_cap_and_noi
 from app.domain.list_card import list_card_changed
+from app.domain.listing_stats import apply_auto_stats_exclusion, set_stats_exclusion
 from app.domain.pricing import normalize_listing_price, sanitize_price_per_sqm
 from app.scrapers.base import RawListing
 
@@ -304,6 +305,24 @@ def upsert_listing(
             listing.status = ListingStatus.ACTIVE.value
         listing.last_seen_at = now
         listing.raw_extra = {**(listing.raw_extra or {}), **finance_extra} or listing.raw_extra
+
+    from app.domain.pricing import effective_listing_psm_usd, psm_suspicious
+
+    extra = dict(listing.raw_extra or {})
+    psm_usd = effective_listing_psm_usd(
+        listing.price,
+        listing.currency,
+        listing.area_sqm,
+        deal_type=listing.deal_type,
+        price_per_sqm=listing.price_per_sqm,
+    )
+    suspicious = psm_suspicious(listing.deal_type, psm_usd)
+    if suspicious:
+        extra["price_suspicious"] = True
+    else:
+        extra.pop("price_suspicious", None)
+    listing.raw_extra = extra or None
+    apply_auto_stats_exclusion(listing, suspicious=suspicious)
 
     if write_snapshot:
         db.add(

@@ -262,6 +262,7 @@ def fix_prices() -> None:
 
     from app.db.models import Listing
     from app.domain.market_stats import to_usd
+    from app.domain.listing_stats import apply_auto_stats_exclusion
     from app.domain.pricing import normalize_listing_price, psm_suspicious, sanitize_price_per_sqm
     from app.domain.signals import listing_psm_usd
 
@@ -336,6 +337,9 @@ def fix_prices() -> None:
                 extra["price_suspicious"] = True
             else:
                 extra.pop("price_suspicious", None)
+            apply_auto_stats_exclusion(
+                lst, suspicious=bool(extra.get("price_suspicious"))
+            )
 
             after = (lst.price, lst.currency, lst.price_per_sqm)
             if after != before or extra != (lst.raw_extra or {}):

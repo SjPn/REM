@@ -152,6 +152,7 @@ def compute_market_stats(
     opex_filter: str | None = None,
 ) -> MarketSlice:
     """opex_filter for rent only: with | without | unknown | None (all)."""
+    from app.domain.listing_stats import is_excluded_from_stats
     from app.domain.signals import resolve_listing_opex
 
     q = select(Listing).where(
@@ -169,6 +170,8 @@ def compute_market_stats(
     city_vals: list[float] = []
 
     for lst in db.scalars(q):
+        if is_excluded_from_stats(lst):
+            continue
         if deal_type == "rent" and opex_filter:
             if resolve_listing_opex(lst) != opex_filter:
                 continue
@@ -243,6 +246,7 @@ def _slice_from_buckets(
 
 def compute_all_market_stats(db: Session) -> dict[str, MarketSlice]:
     """One DB pass for sale + all rent OPEX cohorts (was 5 full scans)."""
+    from app.domain.listing_stats import is_excluded_from_stats
     from app.domain.signals import resolve_listing_opex
     from app.domain.ttl_cache import cache_get
 
@@ -266,6 +270,8 @@ def compute_all_market_stats(db: Session) -> dict[str, MarketSlice]:
             Listing.deal_type.in_(["sale", "rent"]),
         )
         for lst in db.scalars(q):
+            if is_excluded_from_stats(lst):
+                continue
             usd = to_usd(float(lst.price), lst.currency)
             if usd is None or not math.isfinite(usd):
                 continue

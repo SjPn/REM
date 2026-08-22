@@ -98,6 +98,7 @@ class Listing(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     vanished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     price_drop_count: Mapped[int] = mapped_column(Integer, default=0)
+    exclude_from_stats: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     raw_extra: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -236,3 +237,26 @@ def get_session_factory():
 def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
+    _migrate_sqlite(engine)
+
+
+def _migrate_sqlite(engine) -> None:
+    if not str(engine.url).startswith("sqlite"):
+        return
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(listings)")).fetchall()}
+        if "exclude_from_stats" not in cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE listings ADD COLUMN exclude_from_stats "
+                    "BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
+        conn.execute(
+            text(
+                "UPDATE listings SET exclude_from_stats = 1 "
+                "WHERE exclude_from_stats = 0 AND raw_extra LIKE '%\"price_suspicious\": true%'"
+            )
+        )
