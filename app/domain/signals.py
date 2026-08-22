@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import DealHypothesis, Listing, PropertyEvent
+from app.db.models import DealHypothesis, Listing, Property, PropertyEvent
 from app.domain.enums import EventType, ListingStatus
 from app.domain.market_stats import extract_district, normalize_district, to_usd
 
@@ -57,39 +57,72 @@ def _price_drop_events(db: Session, since: datetime, *, deal_type: str | None = 
     return len(listing_ids_for_price_drops(db, since=since, deal_type=deal_type))
 
 
+def _count_property_vanished_events(
+    db: Session,
+    since: datetime,
+    *,
+    deal_type: str | None = None,
+) -> int:
+    q = (
+        select(func.count(func.distinct(PropertyEvent.property_id)))
+        .select_from(PropertyEvent)
+        .where(
+            PropertyEvent.event_type == EventType.VANISHED.value,
+            PropertyEvent.occurred_at >= since,
+            PropertyEvent.property_id.is_not(None),
+        )
+    )
+    if deal_type:
+        q = q.join(Property, PropertyEvent.property_id == Property.id).where(
+            Property.deal_type == deal_type
+        )
+    return db.scalar(q) or 0
+
+
 def listing_ids_for_vanished(
     db: Session,
     *,
     since: datetime,
     deal_type: str | None = None,
 ) -> list[int]:
-    """Listing ids with a vanished event in the window (newest first)."""
-    rows = db.execute(
-        select(PropertyEvent.listing_id, PropertyEvent.occurred_at)
+    """One representative listing per property that fully vanished in the window."""
+    q = (
+        select(
+            PropertyEvent.property_id,
+            PropertyEvent.listing_id,
+            PropertyEvent.occurred_at,
+        )
         .where(
             PropertyEvent.event_type == EventType.VANISHED.value,
             PropertyEvent.occurred_at >= since,
-            PropertyEvent.listing_id.is_not(None),
+            PropertyEvent.property_id.is_not(None),
         )
         .order_by(PropertyEvent.occurred_at.desc())
-    ).all()
-    ids: list[int] = []
-    seen: set[int] = set()
-    for lid, _ in rows:
-        if lid is None or int(lid) in seen:
-            continue
-        seen.add(int(lid))
-        ids.append(int(lid))
-    if deal_type and ids:
-        allowed = set(
-            db.scalars(
-                select(Listing.id).where(
-                    Listing.id.in_(ids),
-                    Listing.deal_type == deal_type,
-                )
-            ).all()
+    )
+    if deal_type:
+        q = q.join(Property, PropertyEvent.property_id == Property.id).where(
+            Property.deal_type == deal_type
         )
-        ids = [i for i in ids if i in allowed]
+    rows = db.execute(q).all()
+    ids: list[int] = []
+    seen_properties: set[int] = set()
+    for pid, lid, _ in rows:
+        if pid is None or int(pid) in seen_properties:
+            continue
+        seen_properties.add(int(pid))
+        if lid is not None:
+            ids.append(int(lid))
+            continue
+        rep = db.scalar(
+            select(Listing.id)
+            .where(
+                Listing.property_id == int(pid),
+                Listing.status == ListingStatus.VANISHED.value,
+            )
+            .order_by(Listing.vanished_at.desc())
+        )
+        if rep is not None:
+            ids.append(int(rep))
     return ids
 
 
@@ -183,8 +216,8 @@ def activity_summary(
             "new_listings": _count_listing_events(
                 db, EventType.APPEARED.value, since, deal_type=deal_type
             ),
-            "vanished": _count_listing_events(
-                db, EventType.VANISHED.value, since, deal_type=deal_type
+            "vanished": _count_property_vanished_events(
+                db, since, deal_type=deal_type
             ),
             "relisted": _count_listing_events(
                 db, EventType.RELISTED.value, since, deal_type=deal_type

@@ -76,7 +76,7 @@ def test_listing_ids_for_activity(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
     from app.config import get_settings
     from app.db import models as db_models
-    from app.db.models import Listing, PropertyEvent, get_session_factory, init_db
+    from app.db.models import Listing, Property, PropertyEvent, get_session_factory, init_db
     from app.domain.signals import listing_ids_for_price_drops, listing_ids_for_vanished
 
     get_settings.cache_clear()
@@ -86,11 +86,19 @@ def test_listing_ids_for_activity(tmp_path, monkeypatch):
     SessionLocal = get_session_factory()
     now = datetime.now(timezone.utc)
     with SessionLocal() as db:
+        prop = Property(
+            fingerprint="fp-test-vanish",
+            deal_type="sale",
+            property_type="office",
+        )
+        db.add(prop)
+        db.flush()
         lst = Listing(
             source="t",
             external_id="1",
             url="https://e/1",
             deal_type="sale",
+            property_id=prop.id,
             status="vanished",
             first_seen_at=now - timedelta(days=3),
             last_seen_at=now,
@@ -102,10 +110,11 @@ def test_listing_ids_for_activity(tmp_path, monkeypatch):
         db.flush()
         db.add(
             PropertyEvent(
+                property_id=prop.id,
                 listing_id=lst.id,
                 event_type="vanished",
                 occurred_at=now,
-                payload={},
+                payload={"level": "property"},
             )
         )
         db.add(

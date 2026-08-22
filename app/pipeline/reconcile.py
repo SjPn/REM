@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
@@ -13,6 +12,110 @@ from app.domain.enums import DealType, EventType, ListingStatus
 
 logger = logging.getLogger(__name__)
 
+_ACTIVE_STATUSES = (ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value)
+
+
+def _count_active_listings(db: Session, property_id: int) -> int:
+    return (
+        db.scalar(
+            select(func.count())
+            .select_from(Listing)
+            .where(
+                Listing.property_id == property_id,
+                Listing.status.in_(_ACTIVE_STATUSES),
+            )
+        )
+        or 0
+    )
+
+
+def _last_property_reactivation(db: Session, property_id: int) -> datetime | None:
+    return db.scalar(
+        select(func.max(PropertyEvent.occurred_at)).where(
+            PropertyEvent.property_id == property_id,
+            PropertyEvent.event_type.in_(
+                [EventType.APPEARED.value, EventType.RELISTED.value]
+            ),
+        )
+    )
+
+
+def _pick_representative_listing(
+    db: Session, property_id: int, preferred_id: int | None = None
+) -> Listing | None:
+    if preferred_id:
+        row = db.get(Listing, preferred_id)
+        if row and row.property_id == property_id:
+            return row
+    return db.scalar(
+        select(Listing)
+        .where(
+            Listing.property_id == property_id,
+            Listing.status == ListingStatus.VANISHED.value,
+        )
+        .order_by(Listing.vanished_at.desc(), Listing.last_seen_at.desc())
+    )
+
+
+def reconcile_property_vanish(
+    db: Session,
+    property_id: int,
+    *,
+    now: datetime | None = None,
+    trigger_listing: Listing | None = None,
+) -> bool:
+    """Emit one VANISHED event per property when it has no active listings anywhere."""
+    if not property_id:
+        return False
+    now = now or utcnow()
+    if _count_active_listings(db, property_id) > 0:
+        _refresh_property_active(db, property_id)
+        return False
+
+    since_reactivate = _last_property_reactivation(db, property_id)
+    already_q = select(func.count()).select_from(PropertyEvent).where(
+        PropertyEvent.property_id == property_id,
+        PropertyEvent.event_type == EventType.VANISHED.value,
+    )
+    if since_reactivate is not None:
+        already_q = already_q.where(PropertyEvent.occurred_at >= since_reactivate)
+    if (db.scalar(already_q) or 0) > 0:
+        _refresh_property_active(db, property_id)
+        return False
+
+    rep = _pick_representative_listing(
+        db, property_id, preferred_id=trigger_listing.id if trigger_listing else None
+    )
+    if rep is None:
+        _refresh_property_active(db, property_id)
+        return False
+
+    siblings = list(
+        db.scalars(select(Listing).where(Listing.property_id == property_id)).all()
+    )
+    vanished_sources = sorted(
+        {s.source for s in siblings if s.status == ListingStatus.VANISHED.value}
+    )
+    db.add(
+        PropertyEvent(
+            property_id=property_id,
+            listing_id=rep.id,
+            event_type=EventType.VANISHED.value,
+            occurred_at=now,
+            payload={
+                "sources_vanished": vanished_sources,
+                "trigger_source": trigger_listing.source if trigger_listing else rep.source,
+                "trigger_external_id": (
+                    trigger_listing.external_id if trigger_listing else rep.external_id
+                ),
+                "level": "property",
+            },
+        )
+    )
+    _refresh_property_active(db, property_id)
+    create_or_update_deal_hypothesis(db, rep)
+    return True
+
 
 def mark_vanished(
     db: Session,
@@ -21,58 +124,58 @@ def mark_vanished(
     *,
     grace_hours: int = 6,
 ) -> int:
-    """Mark active listings of `source` as vanished if missing from latest crawl set.
-
-    Only considers listings previously seen (not created in the far future).
-    Uses a grace window so partial crawls don't wipe the DB.
-    """
+    """Mark missing listings vanished; property-level event only if gone from all sources."""
     now = utcnow()
     cutoff = now - timedelta(hours=grace_hours)
     q = select(Listing).where(
         Listing.source == source,
-        Listing.status.in_(
-            [ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value]
-        ),
+        Listing.status.in_(_ACTIVE_STATUSES),
         Listing.last_seen_at < cutoff,
     )
-    vanished = 0
+    listings_marked = 0
+    properties_emitted = 0
+    touched_properties: set[int] = set()
+
     for listing in db.scalars(q):
         if listing.external_id in seen_external_ids:
             continue
         listing.status = ListingStatus.VANISHED.value
         listing.vanished_at = now
-        db.add(
-            PropertyEvent(
-                property_id=listing.property_id,
-                listing_id=listing.id,
-                event_type=EventType.VANISHED.value,
-                occurred_at=now,
-                payload={"source": source, "external_id": listing.external_id},
-            )
-        )
-        vanished += 1
+        listings_marked += 1
         if listing.property_id:
-            _refresh_property_active(db, listing.property_id)
-            create_or_update_deal_hypothesis(db, listing)
+            touched_properties.add(int(listing.property_id))
+
+    db.flush()
+
+    for pid in touched_properties:
+        rep = db.scalar(
+            select(Listing)
+            .where(
+                Listing.property_id == pid,
+                Listing.source == source,
+                Listing.status == ListingStatus.VANISHED.value,
+            )
+            .order_by(Listing.vanished_at.desc())
+        )
+        if reconcile_property_vanish(db, pid, now=now, trigger_listing=rep):
+            properties_emitted += 1
+
     db.commit()
-    return vanished
+    if listings_marked:
+        logger.info(
+            "%s: marked %s listings vanished, %s properties emitted vanish events",
+            source,
+            listings_marked,
+            properties_emitted,
+        )
+    return listings_marked
 
 
 def _refresh_property_active(db: Session, property_id: int) -> None:
     prop = db.get(Property, property_id)
     if not prop:
         return
-    active_count = db.scalar(
-        select(func.count())
-        .select_from(Listing)
-        .where(
-            Listing.property_id == property_id,
-            Listing.status.in_(
-                [ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value]
-            ),
-        )
-    )
-    prop.is_active = bool(active_count)
+    prop.is_active = _count_active_listings(db, property_id) > 0
 
 
 def _agency_bulk_delist(db: Session, listing: Listing, window_hours: int = 24) -> bool:
@@ -122,17 +225,16 @@ def create_or_update_deal_hypothesis(db: Session, listing: Listing) -> DealHypot
     active_elsewhere = sum(
         1
         for s in siblings
-        if s.id != listing.id
-        and s.status in (ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value)
+        if s.status in _ACTIVE_STATUSES
     )
+    if active_elsewhere > 0:
+        return None
+
     vanished_sources = {
-        s.source
-        for s in siblings
-        if s.status == ListingStatus.VANISHED.value
+        s.source for s in siblings if s.status == ListingStatus.VANISHED.value
     }
     tracked_sources = {s.source for s in siblings}
 
-    # previous price from events
     prev_price = None
     price_events = list(
         db.scalars(
@@ -175,7 +277,7 @@ def create_or_update_deal_hypothesis(db: Session, listing: Listing) -> DealHypot
             last_price=listing.price,
             previous_price=prev_price,
             price_drop_count=listing.price_drop_count or 0,
-            active_on_other_sources=active_elsewhere,
+            active_on_other_sources=0,
             vanished_on_sources=len(vanished_sources),
             tracked_sources_for_property=len(tracked_sources),
             explicit_sold_or_rented=explicit,
@@ -208,15 +310,25 @@ def create_or_update_deal_hypothesis(db: Session, listing: Listing) -> DealHypot
 
 
 def rescore_all_vanished(db: Session) -> int:
-    listings = list(
-        db.scalars(
-            select(Listing).where(Listing.status == ListingStatus.VANISHED.value)
-        )
-    )
+    property_ids = [
+        pid
+        for pid in db.scalars(
+            select(Listing.property_id)
+            .where(
+                Listing.status == ListingStatus.VANISHED.value,
+                Listing.property_id.is_not(None),
+            )
+            .distinct()
+        ).all()
+        if pid is not None
+    ]
     n = 0
-    for listing in listings:
-        create_or_update_deal_hypothesis(db, listing)
-        n += 1
+    for pid in property_ids:
+        if _count_active_listings(db, int(pid)) > 0:
+            continue
+        rep = _pick_representative_listing(db, int(pid))
+        if rep and create_or_update_deal_hypothesis(db, rep):
+            n += 1
     db.commit()
     return n
 

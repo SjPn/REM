@@ -139,6 +139,7 @@ def upsert_listing(
             address=raw.address_raw,
             area_sqm=raw.area_sqm,
             floor=raw.floor,
+            price=raw.price,
             property_type=raw.property_type,
             deal_type=raw.deal_type,
             lat=raw.lat,
