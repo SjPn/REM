@@ -42,12 +42,14 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     enrich_details: bool = True
     max_detail_pages: int = 40
-    min_seen_for_vanish: int = 20
+    min_seen_for_vanish: int = 100
+    # Vanish only if crawl saw at least this share of active listings for the source.
+    vanish_min_active_ratio: float = 0.55
     # Daily scheduler (local time). Default: every day at 07:00
     crawl_schedule_cron: str = "0 7 * * *"
     scheduler_max_pages: int = 8
     scheduler_max_details: int = 80
-    backfill_max_pages: int = 15
+    backfill_max_pages: int = 20
     backfill_max_details: int = 200
     # Lightweight watch crawl: first pages only, enrich new/changed cards only.
     watch_max_pages: int = 1

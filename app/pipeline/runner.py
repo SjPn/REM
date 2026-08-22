@@ -15,6 +15,7 @@ from app.domain.market_history import record_market_snapshot
 from app.domain.ttl_cache import cache_clear
 from app.pipeline.ingest import ingest_many
 from app.pipeline.reconcile import mark_vanished, rescore_all_vanished
+from app.pipeline.vanish_guard import apply_vanish_reconcile, vanish_allowed
 from app.scrapers import SCRAPERS, crawl_source
 from app.scrapers.base import RawListing
 from app.scrapers.http_utils import HttpClient
@@ -49,6 +50,7 @@ def run_crawl(
     sources: list[str] | None = None,
     max_pages: int | None = None,
     apply_vanish: bool | None = None,
+    apply_vanish_after: bool = False,
     mode: CrawlMode = "full",
     max_details: int | None = None,
 ) -> dict:
@@ -92,8 +94,10 @@ def run_crawl(
     summary: dict = {
         "mode": mode,
         "sources": {},
+        "sources_seen": {},
         "started_at": utcnow().isoformat(),
     }
+    sources_seen: dict[str, set[str]] = {}
 
     try:
         with HttpClient() as client:
@@ -119,19 +123,21 @@ def run_crawl(
                         items.append(raw)
                         seen_ids.add(raw.external_id)
                     stats = ingest_many(db, items)
+                    sources_seen[source] = seen_ids
                     vanished = 0
                     vanish_skipped = False
-                    if vanish and seen_ids:
-                        if len(seen_ids) >= settings.min_seen_for_vanish:
+                    vanish_reason = ""
+                    do_vanish = vanish and seen_ids and not apply_vanish_after
+                    if do_vanish:
+                        ok, vanish_reason = vanish_allowed(db, source, len(seen_ids))
+                        if ok:
                             vanished = mark_vanished(db, source, seen_ids)
+                            logger.info(
+                                "%s: vanished %s (%s)", source, vanished, vanish_reason
+                            )
                         else:
                             vanish_skipped = True
-                            logger.warning(
-                                "%s: skip vanish (seen=%s < min=%s)",
-                                source,
-                                len(seen_ids),
-                                settings.min_seen_for_vanish,
-                            )
+                            logger.warning("%s: skip vanish — %s", source, vanish_reason)
                     run.status = "ok"
                     run.listings_seen = len(seen_ids)
                     run.pages_fetched = pages
@@ -140,6 +146,7 @@ def run_crawl(
                         "seen": len(seen_ids),
                         "vanished": vanished,
                         "vanish_skipped": vanish_skipped,
+                        "vanish_reason": vanish_reason or None,
                         "with_price": sum(1 for x in items if x.price is not None),
                         "skipped_irrelevant": stats.get("skipped_irrelevant", 0),
                         "snapshots_skipped": stats.get("snapshots_skipped", 0),
@@ -155,6 +162,10 @@ def run_crawl(
     finally:
         settings.enrich_details = prev_enrich
         settings.max_detail_pages = prev_max_details
+
+    summary["sources_seen"] = {k: len(v) for k, v in sources_seen.items()}
+    if apply_vanish_after and sources_seen:
+        summary["vanish_reconcile"] = apply_vanish_reconcile(db, sources_seen)
 
     cache_clear()
     rescored = rescore_all_vanished(db)

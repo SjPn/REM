@@ -113,7 +113,11 @@ def watch(
 @app.command()
 def backfill(
     source: Optional[str] = typer.Option(
-        None, help=f"One of: {', '.join(SCRAPERS)} (default: lun,domria,rieltor)"
+        None, help=f"One of: {', '.join(SCRAPERS)}"
+    ),
+    sources: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated sources (default: lun,domria)",
     ),
     max_pages: Optional[int] = typer.Option(None, help="Override backfill pages"),
     with_details: bool = typer.Option(
@@ -121,6 +125,11 @@ def backfill(
         help="Also enrich detail pages (slower). Default: list-only for max coverage+prices",
     ),
     max_details: Optional[int] = typer.Option(None),
+    reconcile_vanish: bool = typer.Option(
+        True,
+        "--reconcile-vanish/--no-reconcile-vanish",
+        help="После backfill — vanish только если crawl увидел ≥55% активных",
+    ),
 ) -> None:
     """Initial bulk fill: many list pages, prices from list cards/JSON-LD.
 
@@ -138,29 +147,69 @@ def backfill(
     settings.enrich_details = with_details
     settings.max_detail_pages = max_details or settings.backfill_max_details
 
-    if source:
-        sources = [source]
+    if sources:
+        src_list = [s.strip() for s in sources.split(",") if s.strip()]
+    elif source:
+        src_list = [source]
     else:
-        # OLX often blocked; fill from reliable portals first
-        sources = ["lun", "domria", "rieltor"]
+        src_list = ["lun", "domria"]
+
+    for s in src_list:
+        if s not in SCRAPERS:
+            raise typer.BadParameter(f"Unknown source {s!r}. Choose from {list(SCRAPERS)}")
 
     rprint(
         {
             "mode": "backfill",
-            "sources": sources,
+            "sources": src_list,
             "max_pages": pages,
             "enrich_details": with_details,
             "max_details": settings.max_detail_pages,
+            "reconcile_vanish": reconcile_vanish,
         }
     )
     SessionLocal = get_session_factory()
     with SessionLocal() as db:
-        # First fill: do not vanish — inventory is still incomplete
         summary = run_crawl(
             db,
-            sources=sources,
+            sources=src_list,
             max_pages=pages,
             apply_vanish=False,
+            apply_vanish_after=reconcile_vanish,
+            mode="full",
+        )
+    rprint(summary)
+
+
+@app.command("reconcile-vanish")
+def reconcile_vanish_cmd(
+    source: Optional[str] = typer.Option(None, help="One source"),
+    sources: Optional[str] = typer.Option(None, help="Comma list, default lun,domria"),
+    max_pages: Optional[int] = typer.Option(
+        None, help="List pages (default BACKFILL_MAX_PAGES)"
+    ),
+) -> None:
+    """Полный list-crawl + vanish только при достаточном coverage."""
+    from app.config import get_settings
+
+    init_db()
+    settings = get_settings()
+    pages = max_pages or settings.backfill_max_pages
+    if sources:
+        src_list = [s.strip() for s in sources.split(",") if s.strip()]
+    elif source:
+        src_list = [source]
+    else:
+        src_list = ["lun", "domria"]
+    settings.enrich_details = False
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        summary = run_crawl(
+            db,
+            sources=src_list,
+            max_pages=pages,
+            apply_vanish=False,
+            apply_vanish_after=True,
             mode="full",
         )
     rprint(summary)
