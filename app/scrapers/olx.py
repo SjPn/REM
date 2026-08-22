@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -47,7 +47,11 @@ class OlxScraper:
         self.client = client or HttpClient()
         self.settings = get_settings()
 
-    def crawl(self, max_pages: int | None = None) -> Iterator[RawListing]:
+    def crawl(
+        self,
+        max_pages: int | None = None,
+        needs_detail: Callable[[RawListing], bool] | None = None,
+    ) -> Iterator[RawListing]:
         pages = max_pages or self.settings.crawl_max_pages
         for deal_type, bases in OLX_SEARCH.items():
             batch: list[RawListing] = []
@@ -74,7 +78,7 @@ class OlxScraper:
                 if not items:
                     break
                 batch.extend(items)
-            yield from enrich_listings(self, batch)
+            yield from enrich_listings(self, batch, needs_detail=needs_detail)
 
     def fetch_detail(self, listing: RawListing) -> RawListing:
         html = self.client.get_text(listing.url)

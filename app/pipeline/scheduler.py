@@ -28,39 +28,53 @@ def _parse_cron(expr: str) -> CronTrigger:
     )
 
 
-def run_scheduled_crawl() -> dict:
+def run_scheduled_crawl(*, mode: str = "watch") -> dict:
     settings = get_settings()
     settings.enrich_details = True
-    settings.max_detail_pages = settings.scheduler_max_details
+    if mode == "watch":
+        settings.max_detail_pages = settings.watch_max_details
+        pages = settings.watch_max_pages
+        details = settings.watch_max_details
+    else:
+        settings.max_detail_pages = settings.scheduler_max_details
+        pages = settings.scheduler_max_pages
+        details = settings.scheduler_max_details
     init_db()
     SessionLocal = get_session_factory()
     logger.info(
-        "Scheduled crawl start pages=%s details=%s",
-        settings.scheduler_max_pages,
-        settings.scheduler_max_details,
+        "Scheduled crawl mode=%s pages=%s details=%s",
+        mode,
+        pages,
+        details,
     )
     with SessionLocal() as db:
         summary = run_crawl(
             db,
-            max_pages=settings.scheduler_max_pages,
-            apply_vanish=True,
+            max_pages=pages,
+            max_details=details,
+            mode=mode,
         )
     logger.info("Scheduled crawl finished: %s", summary)
     return summary
 
 
-def start_scheduler(cron: str | None = None) -> None:
+def start_scheduler(cron: str | None = None, *, mode: str = "watch") -> None:
     settings = get_settings()
     expr = cron or settings.crawl_schedule_cron
     trigger = _parse_cron(expr)
     scheduler = BlockingScheduler()
     scheduler.add_job(
-        run_scheduled_crawl,
+        lambda: run_scheduled_crawl(mode=mode),
         trigger=trigger,
         id="daily_crawl",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
     )
-    logger.info("Scheduler armed cron=%r next roughly daily; now=%s", expr, datetime.now())
+    logger.info(
+        "Scheduler armed cron=%r mode=%s next roughly daily; now=%s",
+        expr,
+        mode,
+        datetime.now(),
+    )
     scheduler.start()

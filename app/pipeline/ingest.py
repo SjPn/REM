@@ -11,6 +11,7 @@ from app.domain.enums import EventType, ListingStatus
 from app.domain.fingerprint import FingerprintInput, build_fingerprint, normalize_address
 from app.domain.segments import classify_segment
 from app.domain.signals import detect_opex, parse_cap_and_noi
+from app.domain.list_card import list_card_changed
 from app.domain.pricing import normalize_listing_price
 from app.scrapers.base import RawListing
 
@@ -50,7 +51,9 @@ def _merge_finance_signals(raw: RawListing) -> dict:
     return extra
 
 
-def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None) -> Listing | None:
+def upsert_listing(
+    db: Session, raw: RawListing, seen_at: datetime | None = None
+) -> tuple[Listing | None, bool]:
     decision = classify_segment(
         title=raw.title,
         description=raw.description,
@@ -67,7 +70,7 @@ def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None
             decision.segment,
             decision.reason,
         )
-        return None
+        return None, False
 
     # Normalize to product segment taxonomy
     if decision.segment in {
@@ -169,6 +172,7 @@ def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None
         if raw.district and not prop.district:
             prop.district = raw.district
 
+    write_snapshot = True
     if listing is None:
         listing = Listing(
             property_id=prop.id,
@@ -210,6 +214,13 @@ def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None
             )
         )
     else:
+        write_snapshot = list_card_changed(listing, raw)
+        if raw.description and raw.description.strip() != (listing.description or "").strip():
+            write_snapshot = True
+        if raw.phone and not listing.phone:
+            write_snapshot = True
+        if listing.status == ListingStatus.VANISHED.value:
+            write_snapshot = True
         # Relist detection
         if listing.status == ListingStatus.VANISHED.value:
             listing.status = ListingStatus.RELISTED.value
@@ -288,38 +299,43 @@ def upsert_listing(db: Session, raw: RawListing, seen_at: datetime | None = None
         listing.last_seen_at = now
         listing.raw_extra = {**(listing.raw_extra or {}), **finance_extra} or listing.raw_extra
 
-    db.add(
-        ListingSnapshot(
-            listing_id=listing.id,
-            crawled_at=now,
-            price=listing.price,
-            currency=listing.currency,
-            status=listing.status,
-            title=listing.title,
-            area_sqm=listing.area_sqm,
-            payload=raw.to_dict(),
+    if write_snapshot:
+        db.add(
+            ListingSnapshot(
+                listing_id=listing.id,
+                crawled_at=now,
+                price=listing.price,
+                currency=listing.currency,
+                status=listing.status,
+                title=listing.title,
+                area_sqm=listing.area_sqm,
+                payload=raw.to_dict(),
+            )
         )
-    )
-    return listing
+    return listing, write_snapshot
 
 
 def ingest_many(db: Session, items: list[RawListing]) -> dict[str, int]:
     seen_ids: set[tuple[str, str]] = set()
     created_or_updated = 0
     skipped_irrelevant = 0
+    snapshots_skipped = 0
     for raw in items:
         key = (raw.source, raw.external_id)
         if key in seen_ids:
             continue
         seen_ids.add(key)
-        listing = upsert_listing(db, raw)
+        listing, wrote_snapshot = upsert_listing(db, raw)
         if listing is None:
             skipped_irrelevant += 1
             continue
         created_or_updated += 1
+        if not wrote_snapshot:
+            snapshots_skipped += 1
     db.commit()
     return {
         "upserted": created_or_updated,
         "unique_in_batch": len(seen_ids),
         "skipped_irrelevant": skipped_irrelevant,
+        "snapshots_skipped": snapshots_skipped,
     }

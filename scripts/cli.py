@@ -38,12 +38,12 @@ def crawl(
     source: Optional[str] = typer.Option(
         None, help=f"One of: {', '.join(SCRAPERS)} (default: all)"
     ),
-    max_pages: int = typer.Option(2, min=1, max=50),
+    max_pages: int = typer.Option(8, min=1, max=50),
     no_vanish: bool = typer.Option(False, help="Do not mark missing listings vanished"),
     no_enrich: bool = typer.Option(False, help="Skip detail-page enrichment"),
-    max_details: int = typer.Option(40, min=0, max=2000),
+    max_details: int = typer.Option(80, min=0, max=2000),
 ) -> None:
-    """Crawl selected portals and ingest into DB."""
+    """Full crawl: several list pages + vanish reconcile (weekly / manual deep scan)."""
     from app.config import get_settings
 
     init_db()
@@ -61,6 +61,51 @@ def crawl(
             sources=sources,
             max_pages=max_pages,
             apply_vanish=not no_vanish,
+            mode="full",
+            max_details=max_details,
+        )
+    rprint(summary)
+
+
+@app.command()
+def watch(
+    source: Optional[str] = typer.Option(
+        None, help=f"One of: lun, domria, rieltor (default: all three)"
+    ),
+    max_pages: Optional[int] = typer.Option(
+        None, min=1, max=5, help="List pages per feed (default from WATCH_MAX_PAGES)"
+    ),
+    max_details: Optional[int] = typer.Option(
+        None, min=0, max=200, help="Detail fetches for new/changed only"
+    ),
+) -> None:
+    """Lightweight watch crawl: first pages only, enrich new/changed cards, no vanish."""
+    from app.config import get_settings
+
+    init_db()
+    settings = get_settings()
+    sources = [source] if source else ["lun", "domria", "rieltor"]
+    if source and source not in SCRAPERS:
+        raise typer.BadParameter(f"Unknown source. Choose from {list(SCRAPERS)}")
+    pages = max_pages or settings.watch_max_pages
+    details = max_details if max_details is not None else settings.watch_max_details
+    rprint(
+        {
+            "mode": "watch",
+            "sources": sources,
+            "max_pages": pages,
+            "max_details": details,
+            "vanish": False,
+        }
+    )
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        summary = run_crawl(
+            db,
+            sources=sources,
+            max_pages=pages,
+            max_details=details,
+            mode="watch",
         )
     rprint(summary)
 
@@ -116,6 +161,7 @@ def backfill(
             sources=sources,
             max_pages=pages,
             apply_vanish=False,
+            mode="full",
         )
     rprint(summary)
 
@@ -126,6 +172,9 @@ def scheduler(
         None, help="5-field cron, default from CRAWL_SCHEDULE_CRON (0 7 * * *)"
     ),
     run_now: bool = typer.Option(False, help="Run one crawl immediately, then schedule"),
+    full: bool = typer.Option(
+        False, help="Use full crawl (many pages + vanish) instead of lightweight watch"
+    ),
 ) -> None:
     """Run blocking daily crawler scheduler (keep process alive)."""
     from app.config import get_settings
@@ -133,10 +182,11 @@ def scheduler(
 
     settings = get_settings()
     expr = cron or settings.crawl_schedule_cron
-    rprint(f"Daily crawl cron={expr!r} pages={settings.scheduler_max_pages}")
+    mode = "full" if full else "watch"
+    rprint(f"Daily crawl cron={expr!r} mode={mode}")
     if run_now:
-        rprint(run_scheduled_crawl())
-    start_scheduler(expr)
+        rprint(run_scheduled_crawl(mode=mode))
+    start_scheduler(expr, mode=mode)
 
 
 @app.command()

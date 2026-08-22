@@ -5,7 +5,7 @@ import hashlib
 import random
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from app.config import get_settings
 from app.domain.enums import DealType, SourceName
@@ -42,7 +42,11 @@ class LunScraper:
         self.client = client or HttpClient()
         self.settings = get_settings()
 
-    def crawl(self, max_pages: int | None = None) -> Iterator[RawListing]:
+    def crawl(
+        self,
+        max_pages: int | None = None,
+        needs_detail: Callable[[RawListing], bool] | None = None,
+    ) -> Iterator[RawListing]:
         pages = max_pages or self.settings.crawl_max_pages
         entries = list(LUN_SEARCH.items())
         if self.settings.crawl_human_mode:
@@ -61,7 +65,7 @@ class LunScraper:
                 if not items:
                     break
                 batch.extend(items)
-            yield from enrich_listings(self, batch)
+            yield from enrich_listings(self, batch, needs_detail=needs_detail)
 
     def parse_detail(self, html: str, listing: RawListing) -> RawListing:
         blocks = load_json_ld(html)

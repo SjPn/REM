@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     scheduler_max_details: int = 80
     backfill_max_pages: int = 15
     backfill_max_details: int = 200
+    # Lightweight watch crawl: first pages only, enrich new/changed cards only.
+    watch_max_pages: int = 1
+    watch_max_details: int = 25
+    watch_apply_vanish: bool = False
 
     # FX for UAH/EUR → USD (NBU-ish; update periodically). 2026-08-21: 44.61 грн/$, 52.13 грн/€.
     uah_per_usd: float = 44.61
