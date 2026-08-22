@@ -798,7 +798,7 @@ def dashboard(
         "period": period or None,
         "district": district if district in KYIV_DISTRICTS else None,
         "activity": activity_filter or None,
-        "stats_excluded": stats_excluded_filter or None,
+        "stats_excluded": 1 if stats_excluded_filter else None,
         "opex": opex_mode or None,
         "below_market": below_market or None,
         "sort": sort if sort != "newest" else None,
