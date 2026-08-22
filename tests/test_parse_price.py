@@ -66,6 +66,20 @@ def test_normalize_rieltor_glued_total():
     assert not norm.suspicious_psm
 
 
+def test_repair_absurd_from_text_psm_when_field_is_wrong():
+    norm = normalize_listing_price(
+        price=22_120_000,
+        currency="USD",
+        area_sqm=60,
+        deal_type="sale",
+        price_per_sqm=368_666,
+        title="22 22 120 000 $ 2 000 $/м² вул. Тестова",
+    )
+    assert norm.price == pytest.approx(120_000, rel=0.01)
+    assert norm.price_per_sqm == pytest.approx(2000, rel=0.01)
+    assert not norm.suspicious_psm
+
+
 def test_normalize_rent_price_that_is_actually_psm():
     norm = normalize_listing_price(
         price=15,

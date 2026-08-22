@@ -357,4 +357,20 @@ def normalize_listing_price(
         price_per_sqm=psm_field,
     )
     suspicious = psm_suspicious(deal_type, to_usd(implied, cur))
+
+    if suspicious and text:
+        reparsed_psm, _ = parse_price_per_sqm(text)
+        if reparsed_psm is not None:
+            reparsed_usd = to_usd(float(reparsed_psm), cur)
+            if reparsed_usd is not None and not psm_suspicious(deal_type, reparsed_usd):
+                fixed_total = round(float(reparsed_psm) * a, 2)
+                return PriceNorm(
+                    fixed_total,
+                    currency or cur,
+                    float(reparsed_psm),
+                    False,
+                    False,
+                    "repair_absurd_from_text_psm",
+                )
+
     return PriceNorm(price, currency, psm_field, False, suspicious, "")

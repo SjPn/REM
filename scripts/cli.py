@@ -256,8 +256,72 @@ def clean_junk() -> None:
 
 
 @app.command("fix-prices")
-def fix_prices() -> None:
+def fix_prices(
+    status: str = typer.Option("all", help="all | active | active,relisted"),
+) -> None:
     """Repair listings where stored price is actually $/m² (or was wrongly multiplied)."""
+    stats = _run_fix_prices(status_filter=status)
+    rprint(stats)
+
+
+def _price_audit_counts(db) -> dict[str, int | float]:
+    """Snapshot of common price-quality counters."""
+    from sqlalchemy import func, select
+
+    from app.db.models import Listing
+    from app.domain.pricing import effective_listing_psm_usd
+
+    active = (
+        db.scalar(
+            select(func.count())
+            .select_from(Listing)
+            .where(Listing.status.in_(["active", "relisted"]))
+        )
+        or 0
+    )
+    sale_bad = 0
+    rent_bad = 0
+    for lst in db.scalars(
+        select(Listing).where(
+            Listing.status.in_(["active", "relisted"]),
+            Listing.price.is_not(None),
+            Listing.area_sqm.is_not(None),
+        )
+    ):
+        psm = effective_listing_psm_usd(
+            lst.price,
+            lst.currency,
+            lst.area_sqm,
+            deal_type=lst.deal_type,
+            price_per_sqm=lst.price_per_sqm,
+        )
+        if not psm:
+            continue
+        if lst.deal_type == "sale" and (psm < 450 or psm > 10_000):
+            sale_bad += 1
+        elif lst.deal_type == "rent" and psm > 70:
+            rent_bad += 1
+    rieltor_junk = (
+        db.scalar(
+            select(func.count())
+            .select_from(Listing)
+            .where(
+                Listing.source == "rieltor",
+                Listing.status.in_(["active", "relisted"]),
+                Listing.title.op("GLOB")("[0-9][0-9] [0-9][0-9] *"),
+            )
+        )
+        or 0
+    )
+    return {
+        "active_listings": active,
+        "sale_psm_out_of_band": sale_bad,
+        "rent_psm_over_70": rent_bad,
+        "rieltor_junk_titles": rieltor_junk,
+    }
+
+
+def _run_fix_prices(*, status_filter: str = "all") -> dict[str, int]:
     from sqlalchemy import select
 
     from app.db.models import Listing
@@ -270,20 +334,32 @@ def fix_prices() -> None:
     init_db()
     SessionLocal = get_session_factory()
     touched = 0
+    titles_cleaned = 0
     repaired_text = 0
+    repaired_psm = 0
+
+    statuses: list[str] | None = None
+    if status_filter.strip().lower() != "all":
+        statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
+
     with SessionLocal() as db:
-        for lst in db.scalars(select(Listing)):
+        query = select(Listing)
+        if statuses:
+            query = query.where(Listing.status.in_(statuses))
+        for lst in db.scalars(query):
+            title_for_parse = lst.title
             norm = normalize_listing_price(
                 price=lst.price,
                 currency=lst.currency,
                 area_sqm=lst.area_sqm,
                 deal_type=lst.deal_type,
                 price_per_sqm=lst.price_per_sqm,
-                title=lst.title,
+                title=title_for_parse,
                 description=lst.description,
             )
             extra = dict(lst.raw_extra or {})
             before = (lst.price, lst.currency, lst.price_per_sqm)
+            title_before = lst.title
 
             if norm.price is not None:
                 lst.price = norm.price
@@ -301,10 +377,19 @@ def fix_prices() -> None:
             elif norm.price_per_sqm is not None:
                 lst.price_per_sqm = norm.price_per_sqm
 
+            after = (lst.price, lst.currency, lst.price_per_sqm)
+            price_changed = after != before
+
             if norm.detail == "text_total_and_psm":
                 extra.pop("price_was_psm", None)
                 extra["price_norm"] = norm.detail
-                repaired_text += 1
+                if price_changed:
+                    repaired_text += 1
+            elif norm.detail == "repair_absurd_from_text_psm":
+                extra.pop("price_was_psm", None)
+                extra["price_norm"] = norm.detail
+                if price_changed:
+                    repaired_psm += 1
             elif norm.reinterpreted_as_psm:
                 extra["price_was_psm"] = True
                 extra["price_norm"] = norm.detail
@@ -346,13 +431,119 @@ def fix_prices() -> None:
                 cleaned = strip_leading_price_junk(lst.title)
                 if cleaned and cleaned != lst.title:
                     lst.title = cleaned
+                    titles_cleaned += 1
 
-            after = (lst.price, lst.currency, lst.price_per_sqm)
-            if after != before or extra != (lst.raw_extra or {}):
+            extra_before = dict(lst.raw_extra or {})
+            if (
+                after != before
+                or extra != extra_before
+                or lst.title != title_before
+            ):
                 lst.raw_extra = extra or None
                 touched += 1
         db.commit()
-    rprint({"touched": touched, "repaired_from_text": repaired_text})
+    return {
+        "touched": touched,
+        "repaired_from_text": repaired_text,
+        "repaired_from_text_psm": repaired_psm,
+        "titles_cleaned": titles_cleaned,
+    }
+
+
+@app.command("review-prices")
+def review_prices(
+    status: str = typer.Option("active,relisted", help="all | active | active,relisted"),
+) -> None:
+    """Full price review: audit → fix all matching listings → audit again."""
+    init_db()
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        before = _price_audit_counts(db)
+    rprint({"before": before})
+    stats = _run_fix_prices(status_filter=status)
+    rprint({"fix": stats})
+    with SessionLocal() as db:
+        after = _price_audit_counts(db)
+    rprint({"after": after})
+
+
+@app.command("refresh-prices")
+def refresh_prices(
+    source: str = typer.Option("rieltor", help="Источник: rieltor, lun, domria"),
+    limit: int = typer.Option(80, help="Макс. карточек за прогон"),
+    min_sale_psm: float = typer.Option(10_000, help="Продажа: перезагрузить если $/м² выше"),
+) -> None:
+    """Перезагрузить детальные страницы объявлений с подозрительной ценой."""
+    from sqlalchemy import select
+
+    from app.db.models import Listing
+    from app.domain.pricing import effective_listing_psm_usd
+    from app.pipeline.ingest import upsert_listing
+    from app.scrapers.base import RawListing
+    from app.scrapers.rieltor import RieltorScraper
+
+    scrapers = {"rieltor": RieltorScraper}
+    if source not in scrapers:
+        rprint(f"[red]Источник {source} пока не поддержан[/red]")
+        raise typer.Exit(code=1)
+
+    init_db()
+    SessionLocal = get_session_factory()
+    refreshed = 0
+    scraper = scrapers[source]()
+    try:
+        with SessionLocal() as db:
+            for lst in db.scalars(
+                select(Listing).where(
+                    Listing.source == source,
+                    Listing.status.in_(["active", "relisted"]),
+                    Listing.url.is_not(None),
+                )
+            ):
+                if refreshed >= limit:
+                    break
+                if not lst.price or not lst.area_sqm:
+                    continue
+                psm = effective_listing_psm_usd(
+                    lst.price,
+                    lst.currency,
+                    lst.area_sqm,
+                    deal_type=lst.deal_type,
+                    price_per_sqm=lst.price_per_sqm,
+                )
+                if lst.deal_type == "sale" and (not psm or psm < min_sale_psm):
+                    continue
+                if lst.deal_type == "rent" and (not psm or psm <= 70):
+                    continue
+                raw_stub = RawListing(
+                    source=lst.source,
+                    external_id=lst.external_id,
+                    url=lst.url,
+                    deal_type=lst.deal_type or "sale",
+                    title=lst.title,
+                    description=lst.description,
+                    property_type=lst.property_type,
+                    price=lst.price,
+                    currency=lst.currency,
+                    price_per_sqm=lst.price_per_sqm,
+                    area_sqm=lst.area_sqm,
+                    floor=lst.floor,
+                    address_raw=lst.address_raw,
+                    district=lst.district,
+                    city=lst.city,
+                )
+                try:
+                    detail = scraper.fetch_detail(raw_stub)
+                except Exception as exc:  # noqa: BLE001
+                    rprint(f"[yellow]skip {lst.external_id}: {exc}[/yellow]")
+                    continue
+                upsert_listing(db, detail)
+                refreshed += 1
+            db.commit()
+    finally:
+        scraper.client.close()
+    stats = _run_fix_prices(status_filter="active,relisted")
+    rprint({"refreshed": refreshed, "post_fix": stats})
 
 
 @app.command("backfill-opex")
