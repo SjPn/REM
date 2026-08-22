@@ -14,6 +14,10 @@
           {% if rent_slice_label %} · {{ rent_slice_label }}{% endif %}
         {% endif %}
         · медиана {{ fmt_psm(market_slice.city_median_psm, mode) }}
+        · по {{ market_slice.city_count }} объявл. в расчёте
+        {% if stats_excluded_n %}
+          · <a class="link-more" href="/?deal_type={{ mode }}&stats_excluded=1" title="Показать объявления, исключённые из медиан">{{ stats_excluded_n }} вне статистики →</a>
+        {% endif %}
       </p>
     </div>
     {% if mode == 'rent' %}
@@ -30,23 +34,15 @@
     {% endif %}
   </div>
 
-  <section class="overview" aria-label="Сводка рынка">
-    <div class="ov-card ov-wide">
-      <div class="ov-l">Медиана $/м² · Киев</div>
-      <div class="ov-n">{{ fmt_psm(market_slice.city_median_psm, mode) }}</div>
-      <div class="ov-sub">средняя {{ fmt_psm(market_slice.city_avg_psm, mode) }} · по {{ market_slice.city_count }} объявл.</div>
-    </div>
-    <div class="ov-card">
-      <div class="ov-n">{{ inventory.sale_total if mode == 'sale' else inventory.rent_total }}</div>
-      <div class="ov-l">Сейчас в сети</div>
-    </div>
+  <section class="overview overview-compact" aria-label="Сводка рынка">
     <div class="ov-card">
       <div class="ov-n">
         {% if yields.city_yield_pct is not none %}{{ '%.1f'|format(yields.city_yield_pct) }}%{% else %}—{% endif %}
       </div>
-      <div class="ov-l">Грубая доходность</div>
+      <div class="ov-l">Грубая доходность · Киев</div>
       <div class="ov-sub">
         {% if yields.city_payback_years is not none %}~{{ '%.1f'|format(yields.city_payback_years) }} лет окуп.{% else %}аренда×12 / продажа{% endif %}
+        · {{ yields.note }}
       </div>
     </div>
   </section>

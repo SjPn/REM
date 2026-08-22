@@ -565,6 +565,7 @@ def dashboard(
     period: str | None = None,
     district: str | None = None,
     activity: str | None = Query(None, pattern="^(vanished|price_drop)$"),
+    stats_excluded: int = Query(0, ge=0, le=1),
     opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
     below_market: int = Query(0, ge=0, le=1),
     sort: str = Query("newest"),
@@ -602,11 +603,13 @@ def dashboard(
             .select_from(Listing)
             .where(
                 Listing.status.in_(["active", "relisted"]),
+                Listing.deal_type == deal_type,
                 Listing.exclude_from_stats.is_(True),
             )
         )
         or 0
     )
+    stats_excluded_filter = bool(stats_excluded)
 
     activity_since = datetime.now(timezone.utc) - timedelta(hours=24)
     activity_ids: list[int] | None = None
@@ -645,6 +648,8 @@ def dashboard(
             Listing.price.is_not(None),
             Listing.deal_type == deal_type,
         ]
+    if stats_excluded_filter:
+        filters.append(Listing.exclude_from_stats.is_(True))
     if source:
         filters.append(Listing.source == source)
     if segment:
@@ -786,6 +791,7 @@ def dashboard(
         "period": period or None,
         "district": district if district in KYIV_DISTRICTS else None,
         "activity": activity_filter or None,
+        "stats_excluded": stats_excluded_filter or None,
         "opex": opex_mode or None,
         "below_market": below_market or None,
         "sort": sort if sort != "newest" else None,
@@ -831,6 +837,7 @@ def dashboard(
             "rent_slice_label": rent_slice_label,
             "inventory": inventory,
             "stats_excluded_n": stats_excluded_n,
+            "stats_excluded_filter": stats_excluded_filter,
             "mode_rows": mode_rows,
         },
     )
@@ -924,6 +931,18 @@ def market_page(
 ):
     market = compute_all_market_stats(db)
     inventory = count_active_inventory(db)
+    stats_excluded_n = (
+        db.scalar(
+            select(func.count())
+            .select_from(Listing)
+            .where(
+                Listing.status.in_(["active", "relisted"]),
+                Listing.deal_type == mode,
+                Listing.exclude_from_stats.is_(True),
+            )
+        )
+        or 0
+    )
     stress_map = {s.district: s for s in compute_seller_stress(db, deal_type=mode)}
     opex_mode = opex if mode == "rent" else None
     mode_rows = _mode_district_rows(
@@ -962,6 +981,7 @@ def market_page(
             "compare_by": compare_by,
             "yields": yields,
             "yield_by": yield_by,
+            "stats_excluded_n": stats_excluded_n,
         },
     )
 

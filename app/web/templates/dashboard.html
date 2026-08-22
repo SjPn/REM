@@ -15,7 +15,6 @@
         {% endif %}
         · медиана {{ fmt_psm(market_slice.city_median_psm, deal_type) }}
         {% if deal_type == 'rent' and rent_slice_label %} · {{ rent_slice_label }}{% endif %}
-        {% if stats_excluded_n %} · <span title="Исключены из медиан и средних">{{ stats_excluded_n }} ✓ не в статистике</span>{% endif %}
       </p>
     </div>
   </div>
@@ -37,14 +36,14 @@
       <div class="ov-n">{{ activity_stats.likely_deals }}</div>
       <div class="ov-l">Похоже на сделку</div>
     </a>
-    <div class="ov-card ov-wide">
-      <div class="ov-l">Медиана $/м² · Киев</div>
-      <div class="ov-n ov-n-sm">{{ fmt_psm(market_slice.city_median_psm, deal_type) }}</div>
-      <div class="ov-sub">
-        средняя {{ fmt_psm(market_slice.city_avg_psm, deal_type) }}
-        · по {{ market_slice.city_count }} объявл.
-      </div>
-    </div>
+    {% if stats_excluded_n %}
+    <a class="ov-card is-warn {% if stats_excluded_filter %}is-on{% endif %}"
+       href="{% if stats_excluded_filter %}/?deal_type={{ deal_type }}{% else %}/?deal_type={{ deal_type }}&stats_excluded=1{% endif %}"
+       title="Исключены из медиан и средних. Нажмите, чтобы показать список.">
+      <div class="ov-n">{{ stats_excluded_n }}</div>
+      <div class="ov-l">Не в статистике</div>
+    </a>
+    {% endif %}
   </section>
 
   {% if mode_rows %}
@@ -58,8 +57,8 @@
       <a class="d-chip" href="/?deal_type={{ deal_type }}&district={{ row.district }}{% if opex %}&opex={{ opex }}{% endif %}" title="{{ row.stress_detail }}">
         <span class="d-name">{{ district_ru(row.district) }}</span>
         <span class="d-meta">
-          <strong>{% if row.median_psm is not none %}{{ '%.0f'|format(row.median_psm) if deal_type == 'sale' else '%.1f'|format(row.median_psm) }}{% else %}—{% endif %}</strong>
-          <span class="muted">· {{ row.active }}</span>
+          <strong>{{ row.active }}</strong>
+          <span class="muted">объявл.</span>
         </span>
       </a>
       {% endfor %}
@@ -72,6 +71,7 @@
       <form class="filters filters-side" method="get" action="/">
         <input type="hidden" name="deal_type" value="{{ deal_type }}" />
         {% if activity_filter %}<input type="hidden" name="activity" value="{{ activity_filter }}" />{% endif %}
+        {% if stats_excluded_filter %}<input type="hidden" name="stats_excluded" value="1" />{% endif %}
         <div class="filter-side-head">
           <h2>Фильтры</h2>
           <a class="link-more" href="/?deal_type={{ deal_type }}">Сбросить</a>
@@ -197,9 +197,9 @@
       <div class="section-head">
         <h2>Список</h2>
         <span class="muted">
-          {% if activity_filter == 'vanished' %}исчезли за сутки · {% elif activity_filter == 'price_drop' %}уценили за сутки · {% endif %}
+          {% if stats_excluded_filter %}вне статистики · {% elif activity_filter == 'vanished' %}исчезли за сутки · {% elif activity_filter == 'price_drop' %}уценили за сутки · {% endif %}
           {{ total }} · стр. {{ page }}/{{ pages }}
-          {% if activity_filter %}<a class="link-more" href="/?deal_type={{ deal_type }}">сбросить</a>{% endif %}
+          {% if stats_excluded_filter or activity_filter %}<a class="link-more" href="/?deal_type={{ deal_type }}">сбросить</a>{% endif %}
         </span>
       </div>
 

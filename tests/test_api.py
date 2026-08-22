@@ -36,4 +36,4 @@ def test_health_and_demo_seed():
     assert isinstance(deals, list)
     assert client.get("/").status_code == 200
     assert client.get("/stats").status_code == 200
-    assert "Медиана" in client.get("/").text
+    assert "медиана" in client.get("/").text.lower()

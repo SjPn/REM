@@ -341,6 +341,18 @@ a.ov-card:hover {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(12, 107, 92, 0.18);
 }
+.ov-card.is-warn {
+  background: linear-gradient(160deg, #fff9eb, #fffdf5);
+  border-color: rgba(212, 160, 23, 0.45);
+}
+.ov-card.is-warn.is-on {
+  border-color: #d4a017;
+  box-shadow: 0 0 0 2px rgba(212, 160, 23, 0.22);
+}
+.overview-compact {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 28rem;
+}
 .ov-card.ov-wide { grid-column: span 2; }
 .ov-n {
   font-family: var(--display);
