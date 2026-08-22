@@ -100,6 +100,56 @@ def implied_psm_native(
     return round(p / a, 4)
 
 
+def implied_psm_usd(
+    price: float | None,
+    currency: str | None,
+    area_sqm: float | None,
+) -> float | None:
+    native = implied_psm_native(price, currency, area_sqm)
+    if native is None:
+        return None
+    return to_usd(native, currency)
+
+
+def maybe_fix_rent_currency(
+    price: float | None,
+    currency: str | None,
+    area_sqm: float | None,
+    deal_type: str | None,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+) -> tuple[float | None, str | None]:
+    """
+    LUN/DOM.RIA cards often store UAH totals with currency=USD.
+    If USD $/m² is absurd but the same number as UAH yields sane rent, relabel.
+    """
+    if (deal_type or "").lower() != "rent" or price is None or area_sqm is None:
+        return price, currency
+    cur = (currency or "USD").upper()
+    try:
+        p, a = float(price), float(area_sqm)
+    except (TypeError, ValueError):
+        return price, currency
+    if not math.isfinite(p) or not math.isfinite(a) or p <= 0 or a <= 0:
+        return price, currency
+
+    text = " ".join(x for x in (title, description) if x).lower()
+    if any(tok in text for tok in ("грн", "uah", "₴")):
+        return p, "UAH"
+
+    usd_psm = implied_psm_usd(p, cur, a)
+    if usd_psm is None or usd_psm <= _RENT_PSM_CEILING_USD:
+        return p, cur
+    if cur != "USD":
+        return p, cur
+
+    uah_psm_usd = implied_psm_usd(p, "UAH", a)
+    if uah_psm_usd is not None and _RENT_PSM_FLOOR_USD <= uah_psm_usd <= _RENT_PSM_CEILING_USD:
+        return p, "UAH"
+    return p, cur
+
+
 def sanitize_price_per_sqm(
     *,
     price: float | None,
@@ -146,6 +196,7 @@ def effective_listing_psm_usd(
     deal_type: str | None = None,
     price_per_sqm: float | None = None,
 ) -> float | None:
+    price, currency = maybe_fix_rent_currency(price, currency, area, deal_type)
     native = sanitize_price_per_sqm(
         price=price,
         currency=currency,
@@ -185,6 +236,11 @@ def normalize_listing_price(
     text = " ".join(x for x in (title, description) if x)
     explicit = extract_explicit_psm(text)
     is_rent = (deal_type or "").lower() == "rent"
+
+    price, cur = maybe_fix_rent_currency(
+        price, cur, area_sqm, deal_type, title=title, description=description
+    )
+    currency = cur
 
     # Prefer structured parse from card text when both total and rate are present
     parsed_total, parsed_cur = parse_price(text) if text else (None, None)

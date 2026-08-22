@@ -133,6 +133,14 @@ def test_effective_listing_psm_usd_ignores_mislabeled_field():
     assert psm == pytest.approx(5.58, rel=0.01)
 
 
+def test_maybe_fix_rent_currency_usd_labelled_uah():
+    from app.domain.pricing import maybe_fix_rent_currency
+
+    price, cur = maybe_fix_rent_currency(559260, "USD", 286, "rent")
+    assert cur == "UAH"
+    assert price == 559260
+
+
 def test_kyiv_url_filter():
     assert is_kyiv_region_url(
         "https://dom.ria.com/uk/realty-arenda-ofisnye-pomescheniya-kiev-darnitskiy-x-1.html"

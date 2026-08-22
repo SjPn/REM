@@ -38,12 +38,10 @@ logger = logging.getLogger(__name__)
 DOMRIA_SEARCH = {
     DealType.RENT: [
         "https://dom.ria.com/uk/arenda-ofisov/",
-        "https://dom.ria.com/uk/arenda-kommercheskih-pomescheniy/",
         "https://dom.ria.com/uk/arenda-kom-nedvizhimosti/",
     ],
     DealType.SALE: [
         "https://dom.ria.com/uk/prodazha-ofisov/",
-        "https://dom.ria.com/uk/prodazha-kommercheskih-pomescheniy/",
         "https://dom.ria.com/uk/prodazha-kom-nedvizhimosti/",
     ],
 }
