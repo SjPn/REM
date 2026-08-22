@@ -737,11 +737,26 @@ def stats() -> None:
 
 
 @app.command()
-def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    reload: bool = typer.Option(
+        False,
+        "--reload",
+        help="Автоперезагрузка при изменении кода (локальная разработка).",
+    ),
+) -> None:
     """Run web UI + API."""
+    from pathlib import Path
+
     import uvicorn
 
-    uvicorn.run("app.main:app", host=host, port=port, reload=False)
+    root = Path(__file__).resolve().parents[1]
+    kwargs: dict = {"host": host, "port": port, "reload": reload}
+    if reload:
+        kwargs["reload_dirs"] = [str(root / "app"), str(root / "scripts")]
+        rprint("[yellow]reload=ON[/yellow] — код в app/ и scripts/ подхватывается автоматически")
+    uvicorn.run("app.main:app", **kwargs)
 
 
 if __name__ == "__main__":
