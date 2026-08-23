@@ -83,6 +83,8 @@ def compute_seller_stress(
             if d not in vanished:
                 continue
             if ev.event_type == EventType.VANISHED.value:
+                if not (isinstance(ev.payload, dict) and ev.payload.get("level") == "property"):
+                    continue
                 vanished[d] += 1
             elif ev.event_type == EventType.RELISTED.value:
                 relisted[d] += 1

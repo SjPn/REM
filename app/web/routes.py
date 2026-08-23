@@ -625,6 +625,7 @@ def dashboard(
     if activity_filter == "vanished":
         filters = [
             Listing.deal_type == deal_type,
+            Listing.status == "vanished",
         ]
         if activity_ids is not None:
             if activity_ids:

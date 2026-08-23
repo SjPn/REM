@@ -57,41 +57,19 @@ def _price_drop_events(db: Session, since: datetime, *, deal_type: str | None = 
     return len(listing_ids_for_price_drops(db, since=since, deal_type=deal_type))
 
 
+def _is_property_level_vanish(payload: dict | None) -> bool:
+    return bool(payload) and payload.get("level") == "property"
+
+
 def _count_property_vanished_events(
     db: Session,
     since: datetime,
     *,
     deal_type: str | None = None,
 ) -> int:
+    """Count properties that fully left the market (property-level vanish only)."""
     q = (
-        select(func.count(func.distinct(PropertyEvent.property_id)))
-        .select_from(PropertyEvent)
-        .where(
-            PropertyEvent.event_type == EventType.VANISHED.value,
-            PropertyEvent.occurred_at >= since,
-            PropertyEvent.property_id.is_not(None),
-        )
-    )
-    if deal_type:
-        q = q.join(Property, PropertyEvent.property_id == Property.id).where(
-            Property.deal_type == deal_type
-        )
-    return db.scalar(q) or 0
-
-
-def listing_ids_for_vanished(
-    db: Session,
-    *,
-    since: datetime,
-    deal_type: str | None = None,
-) -> list[int]:
-    """One representative listing per property that fully vanished in the window."""
-    q = (
-        select(
-            PropertyEvent.property_id,
-            PropertyEvent.listing_id,
-            PropertyEvent.occurred_at,
-        )
+        select(PropertyEvent)
         .where(
             PropertyEvent.event_type == EventType.VANISHED.value,
             PropertyEvent.occurred_at >= since,
@@ -103,20 +81,81 @@ def listing_ids_for_vanished(
         q = q.join(Property, PropertyEvent.property_id == Property.id).where(
             Property.deal_type == deal_type
         )
-    rows = db.execute(q).all()
+    events = db.scalars(q).all()
+    counted: set[int] = set()
+    for ev in events:
+        if not _is_property_level_vanish(ev.payload):
+            continue
+        pid = int(ev.property_id)
+        if pid in counted:
+            continue
+        # Skip if object is active again on any source.
+        active = db.scalar(
+            select(func.count())
+            .select_from(Listing)
+            .where(
+                Listing.property_id == pid,
+                Listing.status.in_(
+                    [ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value]
+                ),
+            )
+        )
+        if (active or 0) > 0:
+            continue
+        counted.add(pid)
+    return len(counted)
+
+
+def listing_ids_for_vanished(
+    db: Session,
+    *,
+    since: datetime,
+    deal_type: str | None = None,
+) -> list[int]:
+    """One representative listing per property that fully vanished in the window."""
+    q = (
+        select(PropertyEvent)
+        .where(
+            PropertyEvent.event_type == EventType.VANISHED.value,
+            PropertyEvent.occurred_at >= since,
+            PropertyEvent.property_id.is_not(None),
+        )
+        .order_by(PropertyEvent.occurred_at.desc())
+    )
+    if deal_type:
+        q = q.join(Property, PropertyEvent.property_id == Property.id).where(
+            Property.deal_type == deal_type
+        )
+    events = db.scalars(q).all()
     ids: list[int] = []
     seen_properties: set[int] = set()
-    for pid, lid, _ in rows:
-        if pid is None or int(pid) in seen_properties:
+    for ev in events:
+        if not _is_property_level_vanish(ev.payload):
             continue
-        seen_properties.add(int(pid))
+        pid = int(ev.property_id)
+        if pid in seen_properties:
+            continue
+        active = db.scalar(
+            select(func.count())
+            .select_from(Listing)
+            .where(
+                Listing.property_id == pid,
+                Listing.status.in_(
+                    [ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value]
+                ),
+            )
+        )
+        if (active or 0) > 0:
+            continue
+        seen_properties.add(pid)
+        lid = ev.listing_id
         if lid is not None:
             ids.append(int(lid))
             continue
         rep = db.scalar(
             select(Listing.id)
             .where(
-                Listing.property_id == int(pid),
+                Listing.property_id == pid,
                 Listing.status == ListingStatus.VANISHED.value,
             )
             .order_by(Listing.vanished_at.desc())

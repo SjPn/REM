@@ -73,13 +73,17 @@ def reconcile_property_vanish(
         return False
 
     since_reactivate = _last_property_reactivation(db, property_id)
-    already_q = select(func.count()).select_from(PropertyEvent).where(
-        PropertyEvent.property_id == property_id,
-        PropertyEvent.event_type == EventType.VANISHED.value,
-    )
-    if since_reactivate is not None:
-        already_q = already_q.where(PropertyEvent.occurred_at >= since_reactivate)
-    if (db.scalar(already_q) or 0) > 0:
+    already_rows = db.scalars(
+        select(PropertyEvent).where(
+            PropertyEvent.property_id == property_id,
+            PropertyEvent.event_type == EventType.VANISHED.value,
+        )
+    ).all()
+    for ev in already_rows:
+        if (ev.payload or {}).get("level") != "property":
+            continue
+        if since_reactivate is not None and ev.occurred_at < since_reactivate:
+            continue
         _refresh_property_active(db, property_id)
         return False
 

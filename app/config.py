@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     max_detail_pages: int = 40
     min_seen_for_vanish: int = 100
     # Vanish only if crawl saw at least this share of active listings for the source.
-    vanish_min_active_ratio: float = 0.55
+    # 0.55 was too weak: 15 pages easily pass and mass-vanish the long tail.
+    vanish_min_active_ratio: float = 0.85
     # Daily scheduler (local time). Default: every day at 07:00
     crawl_schedule_cron: str = "0 7 * * *"
     scheduler_max_pages: int = 8

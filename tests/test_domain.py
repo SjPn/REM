@@ -15,6 +15,7 @@ def test_fingerprint_stable_for_same_object():
         area_sqm=120,
         floor=4,
         price=2200,
+        currency="USD",
         property_type="office",
         deal_type="rent",
     )
@@ -23,10 +24,33 @@ def test_fingerprint_stable_for_same_object():
         area_sqm=120.4,
         floor=4,
         price=2280,
-        property_type="office",
+        currency="USD",
+        property_type="free_purpose",
         deal_type="rent",
+        lat=50.45,
+        lon=30.52,
     )
     assert build_fingerprint(a) == build_fingerprint(b)
+
+
+def test_fingerprint_usd_uah_same_band():
+    usd = FingerprintInput(
+        address="вул. Хрещатик, 1",
+        area_sqm=100,
+        floor=2,
+        price=100_000,
+        currency="USD",
+        deal_type="sale",
+    )
+    uah = FingerprintInput(
+        address="вул. Хрещатик, 1",
+        area_sqm=100,
+        floor=2,
+        price=4_461_000,  # ~100k USD at 44.61
+        currency="UAH",
+        deal_type="sale",
+    )
+    assert build_fingerprint(usd) == build_fingerprint(uah)
 
 
 def test_price_band_groups_small_changes():
@@ -41,6 +65,7 @@ def test_phone_used_only_when_weak_location():
         area_sqm=100,
         floor=2,
         price=100_000,
+        currency="USD",
         property_type="office",
         deal_type="sale",
         lat=50.45,
@@ -53,6 +78,7 @@ def test_phone_used_only_when_weak_location():
         address=None,
         area_sqm=None,
         price=1000,
+        currency="USD",
         deal_type="rent",
         phone="380501112233",
     )

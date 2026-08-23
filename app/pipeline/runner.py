@@ -123,15 +123,20 @@ def run_crawl(
                         items.append(raw)
                         seen_ids.add(raw.external_id)
                     stats = ingest_many(db, items)
-                    sources_seen[source] = seen_ids
+                    # Vanish must use upserted ids only — irrelevant cards inflate "seen"
+                    # and let partial crawls mass-delete real inventory.
+                    vanish_seen = set(stats.pop("upserted_external_ids", set()) or set())
+                    if not vanish_seen:
+                        vanish_seen = seen_ids
+                    sources_seen[source] = vanish_seen
                     vanished = 0
                     vanish_skipped = False
                     vanish_reason = ""
-                    do_vanish = vanish and seen_ids and not apply_vanish_after
+                    do_vanish = vanish and vanish_seen and not apply_vanish_after
                     if do_vanish:
-                        ok, vanish_reason = vanish_allowed(db, source, len(seen_ids))
+                        ok, vanish_reason = vanish_allowed(db, source, len(vanish_seen))
                         if ok:
-                            vanished = mark_vanished(db, source, seen_ids)
+                            vanished = mark_vanished(db, source, vanish_seen)
                             logger.info(
                                 "%s: vanished %s (%s)", source, vanished, vanish_reason
                             )
@@ -139,11 +144,12 @@ def run_crawl(
                             vanish_skipped = True
                             logger.warning("%s: skip vanish — %s", source, vanish_reason)
                     run.status = "ok"
-                    run.listings_seen = len(seen_ids)
+                    run.listings_seen = len(vanish_seen)
                     run.pages_fetched = pages
                     summary["sources"][source] = {
                         "upserted": stats["upserted"],
-                        "seen": len(seen_ids),
+                        "seen_raw": len(seen_ids),
+                        "seen": len(vanish_seen),
                         "vanished": vanished,
                         "vanish_skipped": vanish_skipped,
                         "vanish_reason": vanish_reason or None,

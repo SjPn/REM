@@ -140,6 +140,7 @@ def upsert_listing(
             area_sqm=raw.area_sqm,
             floor=raw.floor,
             price=raw.price,
+            currency=raw.currency,
             property_type=raw.property_type,
             deal_type=raw.deal_type,
             lat=raw.lat,
@@ -346,6 +347,7 @@ def upsert_listing(
 
 def ingest_many(db: Session, items: list[RawListing]) -> dict[str, int]:
     seen_ids: set[tuple[str, str]] = set()
+    upserted_external_ids: set[str] = set()
     created_or_updated = 0
     skipped_irrelevant = 0
     snapshots_skipped = 0
@@ -359,6 +361,7 @@ def ingest_many(db: Session, items: list[RawListing]) -> dict[str, int]:
             skipped_irrelevant += 1
             continue
         created_or_updated += 1
+        upserted_external_ids.add(raw.external_id)
         if not wrote_snapshot:
             snapshots_skipped += 1
     db.commit()
@@ -367,4 +370,5 @@ def ingest_many(db: Session, items: list[RawListing]) -> dict[str, int]:
         "unique_in_batch": len(seen_ids),
         "skipped_irrelevant": skipped_irrelevant,
         "snapshots_skipped": snapshots_skipped,
+        "upserted_external_ids": upserted_external_ids,
     }

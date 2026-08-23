@@ -69,6 +69,58 @@ def test_portal_blocked_error():
     assert err.status_code == 429
 
 
+def test_activity_ignores_legacy_listing_vanish(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    db_path = tmp_path / "legacy_van.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    from app.config import get_settings
+    from app.db import models as db_models
+    from app.db.models import Listing, Property, PropertyEvent, get_session_factory, init_db
+    from app.domain.signals import activity_summary, listing_ids_for_vanished
+    from app.domain.ttl_cache import cache_clear
+
+    get_settings.cache_clear()
+    cache_clear()
+    db_models._engine = None
+    db_models._SessionLocal = None
+    init_db()
+    SessionLocal = get_session_factory()
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        prop = Property(fingerprint="fp-legacy", deal_type="sale")
+        db.add(prop)
+        db.flush()
+        lst = Listing(
+            source="t",
+            external_id="leg1",
+            url="https://e/leg1",
+            deal_type="sale",
+            property_id=prop.id,
+            status="vanished",
+            first_seen_at=now,
+            last_seen_at=now,
+            vanished_at=now,
+            price=100000,
+            currency="USD",
+        )
+        db.add(lst)
+        db.flush()
+        db.add(
+            PropertyEvent(
+                property_id=prop.id,
+                listing_id=lst.id,
+                event_type="vanished",
+                occurred_at=now,
+                payload={},  # legacy listing-level
+            )
+        )
+        db.commit()
+        since = now - timedelta(hours=24)
+        assert listing_ids_for_vanished(db, since=since) == []
+        assert activity_summary(db, hours=24)["vanished"] == 0
+
+
 def test_listing_ids_for_activity(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
 
