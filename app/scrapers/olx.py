@@ -24,6 +24,7 @@ from app.scrapers.detail import (
 )
 from app.scrapers.enrich import enrich_listings
 from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area, parse_price
+from app.scrapers.text_fix import clean_text, decode_js_escaped_json, fix_mojibake
 
 logger = logging.getLogger(__name__)
 
@@ -154,10 +155,10 @@ class OlxScraper:
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
-                raw = raw.encode("utf-8").decode("unicode_escape")
-                data = json.loads(raw)
+                # JS-escaped JSON inside a string: unicode_escape alone mangles UTF-8 Cyrillic.
+                data = json.loads(decode_js_escaped_json(raw))
             ads = data.get("listing", {}).get("listing", {}).get("ads") or []
-        except (json.JSONDecodeError, UnicodeError, KeyError, TypeError):
+        except (json.JSONDecodeError, UnicodeError, KeyError, TypeError, ValueError):
             logger.warning("OLX: failed to decode __PRERENDERED_STATE__")
             return []
         items: list[RawListing] = []
@@ -172,7 +173,7 @@ class OlxScraper:
     def _ad_to_raw(self, ad: dict, deal_type: DealType) -> RawListing | None:
         ext_id = ad.get("id")
         url = ad.get("url") or ad.get("urlPath")
-        title = (ad.get("title") or "").strip()
+        title = clean_text(ad.get("title"), limit=500) or ""
         if not ext_id or not url or len(title) < 8:
             return None
         if not str(url).startswith("http"):
@@ -202,14 +203,15 @@ class OlxScraper:
                     floor = None
 
         loc = ad.get("location") or {}
-        district = loc.get("districtName")
-        city = loc.get("cityName") or "Київ"
+        district = fix_mojibake(loc.get("districtName"))
+        city = fix_mojibake(loc.get("cityName")) or "Київ"
         address_parts = [p for p in (district, city) if p]
         address_raw = ", ".join(address_parts) if address_parts else city
 
         geo = ad.get("map") or {}
         lat = geo.get("lat")
         lon = geo.get("lon")
+        description = clean_text(ad.get("description"), limit=5000)
 
         return RawListing(
             source=self.source,
@@ -217,7 +219,7 @@ class OlxScraper:
             url=str(url).split("?")[0],
             deal_type=deal_type.value,
             title=title[:500],
-            description=(ad.get("description") or "")[:5000] or None,
+            description=description,
             property_type=guess_property_type(f"{title} {url}"),
             price=float(price) if price is not None else None,
             currency=str(currency).upper() if currency else "UAH",
@@ -225,12 +227,13 @@ class OlxScraper:
             floor=floor,
             address_raw=address_raw,
             city=city,
+            district=district,
             lat=float(lat) if lat is not None else None,
             lon=float(lon) if lon is not None else None,
             extra={
                 "snippet": title[:400],
                 "olx_status": ad.get("status"),
-                "seller": (ad.get("user") or {}).get("name"),
+                "seller": fix_mojibake((ad.get("user") or {}).get("name")),
             },
         )
 

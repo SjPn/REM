@@ -458,6 +458,10 @@ def _collect_price_candidates(text: str) -> list[tuple[float, str, int, int]]:
             m = re.match(pat, text[i:], flags=re.IGNORECASE)
             if not m:
                 continue
+            # Avoid substring numbers glued inside a larger amount ("5 000" inside "295 000 $").
+            num_start = i + m.start(1)
+            if num_start > 0 and text[num_start - 1].isdigit():
+                continue
             tail = text[i + m.end() : i + m.end() + 12]
             if re.match(
                 r"\s*/\s*м(?:²|2)|\s*/\s*m2|\s*/\s*sqm|\s*за\s*м(?:²|2)",
@@ -656,6 +660,9 @@ def parse_floor(text: str | None) -> int | None:
     m = re.search(r"(-?\d+)\s*(?:поверх|эт\.?|floor)", text, re.IGNORECASE)
     if not m:
         m = re.search(r"(?:поверх|эт\.?|floor)\s*[:\-]?\s*(-?\d+)", text, re.IGNORECASE)
+    if not m:
+        # m2bomber / DOM.RIA style: "19/19 п" or "2/6 п"
+        m = re.search(r"(?<!\d)(-?\d+)\s*/\s*\d+\s*п\b", text, re.IGNORECASE)
     if not m:
         return None
     try:

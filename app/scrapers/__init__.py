@@ -7,6 +7,7 @@ from app.scrapers.base import RawListing
 from app.scrapers.domria import DomriaScraper
 from app.scrapers.http_utils import HttpClient
 from app.scrapers.lun import LunScraper
+from app.scrapers.m2bomber import M2BomberScraper
 from app.scrapers.olx import OlxScraper
 from app.scrapers.rieltor import RieltorScraper
 
@@ -15,6 +16,7 @@ SCRAPERS = {
     SourceName.OLX.value: OlxScraper,
     SourceName.DOMRIA.value: DomriaScraper,
     SourceName.RIELTOR.value: RieltorScraper,
+    SourceName.M2BOMBER.value: M2BomberScraper,
 }
 
 

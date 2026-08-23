@@ -52,6 +52,7 @@ class SourceName(StrEnum):
     DOMRIA = "domria"
     OLX = "olx"
     RIELTOR = "rieltor"
+    M2BOMBER = "m2bomber"
 
 
 class Currency(StrEnum):

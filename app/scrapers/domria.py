@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import random
 import re
-import time
 from collections.abc import Callable, Iterator
 from urllib.parse import urljoin
 
@@ -30,19 +29,22 @@ from app.scrapers.http_utils import (
     guess_property_type,
     is_kyiv_region_url,
     parse_area,
+    parse_floor,
     parse_price,
 )
 
 logger = logging.getLogger(__name__)
 
+# City-scoped feeds — unscoped /prodazha-ofisov/ mixes all Ukraine and mostly
+# non-Kyiv cards, so the old parser returned almost nothing useful.
 DOMRIA_SEARCH = {
     DealType.RENT: [
-        "https://dom.ria.com/uk/arenda-ofisov/",
-        "https://dom.ria.com/uk/arenda-kom-nedvizhimosti/",
+        "https://dom.ria.com/uk/arenda-ofisov/kiev/",
+        "https://dom.ria.com/uk/arenda-kom-nedvizhimosti/kiev/",
     ],
     DealType.SALE: [
-        "https://dom.ria.com/uk/prodazha-ofisov/",
-        "https://dom.ria.com/uk/prodazha-kom-nedvizhimosti/",
+        "https://dom.ria.com/uk/prodazha-ofisov/kiev/",
+        "https://dom.ria.com/uk/prodazha-kom-nedvizhimosti/kiev/",
     ],
 }
 
@@ -122,7 +124,6 @@ class DomriaScraper:
                 if offer.get("areaServed") and isinstance(offer["areaServed"], str):
                     address = address or offer["areaServed"]
                     if "район" in offer["areaServed"].lower() or "район" in offer["areaServed"]:
-                        # e.g. "... район Дарницкий ..."
                         m = re.search(
                             r"район\s+([A-Za-zА-Яа-яІіЇїЄєҐґ'’\-]+)",
                             offer["areaServed"],
@@ -168,6 +169,64 @@ class DomriaScraper:
 
     def _parse_list(self, html: str, deal_type: DealType) -> list[RawListing]:
         soup = BeautifulSoup(html, "lxml")
+        items = self._parse_realty_items(soup, deal_type)
+        if items:
+            return items
+        return self._parse_list_links(soup, deal_type)
+
+    def _parse_realty_items(self, soup: BeautifulSoup, deal_type: DealType) -> list[RawListing]:
+        seen: set[str] = set()
+        items: list[RawListing] = []
+        for card in soup.select(".realty-item"):
+            a = card.select_one("a[href*='realty-']")
+            if not a or not a.get("href"):
+                continue
+            url = urljoin("https://dom.ria.com", a["href"]).split("?")[0]
+            if not is_kyiv_region_url(url):
+                continue
+            ext_id = self._extract_id(url)
+            if not ext_id or ext_id in seen:
+                continue
+            seen.add(ext_id)
+
+            title_el = card.select_one(".tit a, a.size22, a.bold")
+            title = (title_el.get_text(" ", strip=True) if title_el else "") or a.get_text(
+                " ", strip=True
+            )
+            blob = card.get_text(" ", strip=True)
+            if len(title) < 5:
+                title = blob[:180]
+            if len(title) < 5:
+                continue
+
+            price, currency = parse_price(blob)
+            area = parse_area(blob)
+            floor = parse_floor(blob)
+            address = self._guess_address(title) or title[:180]
+            district = self._guess_district(blob)
+
+            items.append(
+                RawListing(
+                    source=self.source,
+                    external_id=ext_id,
+                    url=url,
+                    deal_type=deal_type.value,
+                    title=title[:500],
+                    property_type=guess_property_type(f"{title} {url}"),
+                    price=price,
+                    currency=currency
+                    or ("USD" if deal_type == DealType.SALE else "UAH"),
+                    area_sqm=area,
+                    floor=floor,
+                    address_raw=address,
+                    district=district,
+                    city="Київ",
+                    extra={"list_only": True, "snippet": blob[:400]},
+                )
+            )
+        return items
+
+    def _parse_list_links(self, soup: BeautifulSoup, deal_type: DealType) -> list[RawListing]:
         seen: set[str] = set()
         items: list[RawListing] = []
         for a in soup.find_all("a", href=True):
@@ -186,8 +245,6 @@ class DomriaScraper:
             if len(title) < 5:
                 continue
 
-            # Use ONLY the anchor text for list-level fields to avoid parent-card pollution
-            # (DOM.RIA wraps many cards; walking up parents merges neighbors → fake dupes).
             price, currency = parse_price(title)
             area = parse_area(title)
             address = self._guess_address(title) or title[:180]
@@ -223,5 +280,13 @@ class DomriaScraper:
             r"((?:вул\.|просп\.|пр-т|б-р|проспект|улица)\s+[^\d,]{2,40},?\s*\d+\w?)",
             text,
             re.IGNORECASE,
+        )
+        return m.group(1).strip() if m else None
+
+    @staticmethod
+    def _guess_district(text: str) -> str | None:
+        m = re.search(
+            r"([А-Яа-яІіЇїЄєҐґ'’\-]+(?:ський|ский|ський))\s*(?:·|,|\s+Київ)",
+            text,
         )
         return m.group(1).strip() if m else None

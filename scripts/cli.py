@@ -722,6 +722,43 @@ def prune_irrelevant() -> None:
     rprint({"removed_listings": removed, "removed_orphan_properties": orphans})
 
 
+@app.command("fix-mojibake")
+def fix_mojibake_cmd(
+    source: Optional[str] = typer.Option("olx", help="Источник (по умолчанию olx)"),
+) -> None:
+    """Починить double-UTF-8 («абракадабру») в title/description/address."""
+    from sqlalchemy import select
+
+    from app.db.models import Listing
+    from app.scrapers.text_fix import fix_mojibake, looks_like_mojibake
+
+    init_db()
+    SessionLocal = get_session_factory()
+    fixed = 0
+    scanned = 0
+    with SessionLocal() as db:
+        q = select(Listing)
+        if source:
+            q = q.where(Listing.source == source)
+        for lst in db.scalars(q):
+            scanned += 1
+            changed = False
+            for attr in ("title", "description", "address_raw", "district", "city"):
+                val = getattr(lst, attr, None)
+                if not val:
+                    continue
+                if not (looks_like_mojibake(val) or "Ð" in val or "Ñ" in val):
+                    continue
+                new = fix_mojibake(val)
+                if new and new != val:
+                    setattr(lst, attr, new)
+                    changed = True
+            if changed:
+                fixed += 1
+        db.commit()
+    rprint({"source": source, "scanned": scanned, "fixed": fixed})
+
+
 @app.command("snapshot-market")
 def snapshot_market() -> None:
     """Write/refresh today's market snapshot for /stats charts."""
