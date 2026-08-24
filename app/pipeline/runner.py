@@ -207,5 +207,12 @@ def run_crawl(
         logger.exception("market snapshot failed")
         summary["market_snapshot_day"] = None
     summary["rescored_hypotheses"] = rescored
+    try:
+        from app.domain.coverage import coverage_report
+
+        summary["coverage"] = coverage_report(db, sources=list(summary.get("sources", {})))
+    except Exception:  # noqa: BLE001
+        logger.exception("coverage report failed")
+        summary["coverage"] = None
     summary["finished_at"] = utcnow().isoformat()
     return summary

@@ -117,9 +117,11 @@ def backfill(
     ),
     sources: Optional[str] = typer.Option(
         None,
-        help="Comma-separated sources (default: lun,domria)",
+        help="Comma-separated sources (default: lun,domria,rieltor,olx,m2bomber)",
     ),
-    max_pages: Optional[int] = typer.Option(None, help="Override backfill pages"),
+    max_pages: Optional[int] = typer.Option(
+        None, help="Override pages for all sources (else per-source defaults, LUN higher)"
+    ),
     with_details: bool = typer.Option(
         False,
         help="Also enrich detail pages (slower). Default: list-only for max coverage+prices",
@@ -128,7 +130,12 @@ def backfill(
     reconcile_vanish: bool = typer.Option(
         True,
         "--reconcile-vanish/--no-reconcile-vanish",
-        help="После backfill — vanish только если crawl увидел ≥55% активных",
+        help="После backfill — vanish только если coverage ≥ VANISH_MIN_ACTIVE_RATIO",
+    ),
+    until_coverage: bool = typer.Option(
+        False,
+        "--until-coverage/--no-until-coverage",
+        help="Поднимать pages до coverage ≥ target (потолок BACKFILL_COVERAGE_MAX_PAGES)",
     ),
 ) -> None:
     """Initial bulk fill: many list pages, prices from list cards/JSON-LD.
@@ -136,23 +143,29 @@ def backfill(
     Recommended first run (fast, max inventory+prices):
       python -m scripts.cli backfill
 
+    Until vanish-safe coverage:
+      python -m scripts.cli backfill --until-coverage --no-reconcile-vanish
+      python -m scripts.cli coverage
+
     Then deepen phones/status:
       python -m scripts.cli backfill --with-details
     """
     from app.config import get_settings
+    from app.domain.coverage import backfill_pages_for_source, coverage_for_source
 
     init_db()
     settings = get_settings()
-    pages = max_pages or settings.backfill_max_pages
     settings.enrich_details = with_details
     settings.max_detail_pages = max_details or settings.backfill_max_details
+    target = float(settings.vanish_min_active_ratio)
+    page_ceiling = int(settings.backfill_coverage_max_pages)
 
     if sources:
         src_list = [s.strip() for s in sources.split(",") if s.strip()]
     elif source:
         src_list = [source]
     else:
-        src_list = ["lun", "domria"]
+        src_list = list(SCRAPERS.keys())
 
     for s in src_list:
         if s not in SCRAPERS:
@@ -162,80 +175,191 @@ def backfill(
         {
             "mode": "backfill",
             "sources": src_list,
-            "max_pages": pages,
+            "max_pages_override": max_pages,
+            "until_coverage": until_coverage,
+            "target_ratio": target,
+            "page_ceiling": page_ceiling,
             "enrich_details": with_details,
             "max_details": settings.max_detail_pages,
             "reconcile_vanish": reconcile_vanish,
         }
     )
     SessionLocal = get_session_factory()
+    summaries: list[dict] = []
     with SessionLocal() as db:
-        summary = run_crawl(
-            db,
-            sources=src_list,
-            max_pages=pages,
-            apply_vanish=False,
-            apply_vanish_after=reconcile_vanish,
-            mode="full",
-        )
-    rprint(summary)
+        for src in src_list:
+            pages = backfill_pages_for_source(src, max_pages)
+            if not until_coverage:
+                rprint({"source": src, "max_pages": pages})
+                summaries.append(
+                    run_crawl(
+                        db,
+                        sources=[src],
+                        max_pages=pages,
+                        apply_vanish=False,
+                        apply_vanish_after=reconcile_vanish,
+                        mode="full",
+                    )
+                )
+                continue
+
+            rounds = 0
+            while True:
+                rounds += 1
+                rprint({"source": src, "round": rounds, "max_pages": pages})
+                summaries.append(
+                    run_crawl(
+                        db,
+                        sources=[src],
+                        max_pages=pages,
+                        apply_vanish=False,
+                        apply_vanish_after=False,
+                        mode="full",
+                    )
+                )
+                cov = coverage_for_source(db, src)
+                ratio = cov.ratio or 0.0
+                rprint(
+                    {
+                        "source": src,
+                        "ratio": ratio,
+                        "active": cov.active,
+                        "seen": cov.last_seen,
+                        "vanish_ok": cov.vanish_ok,
+                    }
+                )
+                if cov.vanish_ok or pages >= page_ceiling:
+                    break
+                if ratio <= 0.01:
+                    nxt = min(page_ceiling, max(pages * 2, pages + 10))
+                else:
+                    nxt = int(pages * (target / ratio) * 1.15)
+                    nxt = max(pages + 10, nxt)
+                nxt = min(page_ceiling, nxt)
+                if nxt <= pages:
+                    break
+                pages = nxt
+
+            if reconcile_vanish:
+                rprint({"source": src, "vanish_pass_pages": pages})
+                summaries.append(
+                    run_crawl(
+                        db,
+                        sources=[src],
+                        max_pages=pages,
+                        apply_vanish=False,
+                        apply_vanish_after=True,
+                        mode="full",
+                    )
+                )
+    rprint({"backfill_done": True, "runs": len(summaries)})
+    with SessionLocal() as db:
+        from app.domain.coverage import coverage_report
+
+        rprint(coverage_report(db, sources=src_list))
+
+
+@app.command()
+def coverage(
+    sources: Optional[str] = typer.Option(
+        None, help="Comma list; default all scrapers"
+    ),
+    recent: int = typer.Option(15, help="How many recent CrawlRun rows to show"),
+) -> None:
+    """Coverage seen/active по источникам и готовность vanish."""
+    from app.domain.coverage import coverage_report, recent_crawls
+
+    init_db()
+    src_list = (
+        [s.strip() for s in sources.split(",") if s.strip()] if sources else None
+    )
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        report = coverage_report(db, sources=src_list)
+        report["recent_crawls"] = recent_crawls(db, limit=recent)
+    import json
+
+    print(json.dumps(report, ensure_ascii=True, indent=2, default=str))
 
 
 @app.command("reconcile-vanish")
 def reconcile_vanish_cmd(
     source: Optional[str] = typer.Option(None, help="One source"),
-    sources: Optional[str] = typer.Option(None, help="Comma list, default lun,domria"),
+    sources: Optional[str] = typer.Option(None, help="Comma list, default all"),
     max_pages: Optional[int] = typer.Option(
-        None, help="List pages (default BACKFILL_MAX_PAGES)"
+        None, help="List pages (default per-source backfill pages)"
     ),
 ) -> None:
     """Полный list-crawl + vanish только при достаточном coverage."""
     from app.config import get_settings
+    from app.domain.coverage import backfill_pages_for_source, coverage_report
 
     init_db()
     settings = get_settings()
-    pages = max_pages or settings.backfill_max_pages
     if sources:
         src_list = [s.strip() for s in sources.split(",") if s.strip()]
     elif source:
         src_list = [source]
     else:
-        src_list = ["lun", "domria"]
+        src_list = list(SCRAPERS.keys())
     settings.enrich_details = False
     SessionLocal = get_session_factory()
     with SessionLocal() as db:
-        summary = run_crawl(
-            db,
-            sources=src_list,
-            max_pages=pages,
-            apply_vanish=False,
-            apply_vanish_after=True,
-            mode="full",
-        )
-    rprint(summary)
+        for src in src_list:
+            pages = backfill_pages_for_source(src, max_pages)
+            run_crawl(
+                db,
+                sources=[src],
+                max_pages=pages,
+                apply_vanish=False,
+                apply_vanish_after=True,
+                mode="full",
+            )
+        rprint(coverage_report(db, sources=src_list))
 
 
 @app.command()
 def scheduler(
     cron: Optional[str] = typer.Option(
-        None, help="5-field cron, default from CRAWL_SCHEDULE_CRON (0 7 * * *)"
+        None, help="Watch cron, default CRAWL_SCHEDULE_CRON (0 7 * * *)"
     ),
-    run_now: bool = typer.Option(False, help="Run one crawl immediately, then schedule"),
+    full_cron: Optional[str] = typer.Option(
+        None, help="Full crawl cron, default FULL_CRAWL_SCHEDULE_CRON (0 3 * * 0)"
+    ),
+    run_now: bool = typer.Option(False, help="Run one watch crawl immediately, then schedule"),
     full: bool = typer.Option(
-        False, help="Use full crawl (many pages + vanish) instead of lightweight watch"
+        False, help="Only full crawl job (many pages + vanish if coverage OK)"
+    ),
+    dual: bool = typer.Option(
+        True,
+        "--dual/--single",
+        help="Daily watch + weekly full (recommended). --single = one job only",
     ),
 ) -> None:
-    """Run blocking daily crawler scheduler (keep process alive)."""
+    """Run blocking crawler scheduler (keep process alive)."""
     from app.config import get_settings
     from app.pipeline.scheduler import run_scheduled_crawl, start_scheduler
 
     settings = get_settings()
-    expr = cron or settings.crawl_schedule_cron
+    if full and dual:
+        dual = False
     mode = "full" if full else "watch"
-    rprint(f"Daily crawl cron={expr!r} mode={mode}")
+    rprint(
+        {
+            "dual": dual and not full,
+            "watch_cron": cron or settings.crawl_schedule_cron,
+            "full_cron": full_cron or settings.full_crawl_schedule_cron,
+            "mode_if_single": mode,
+        }
+    )
     if run_now:
-        rprint(run_scheduled_crawl(mode=mode))
-    start_scheduler(expr, mode=mode)
+        rprint(run_scheduled_crawl(mode="watch" if (dual and not full) else mode))
+    start_scheduler(
+        cron,
+        mode=mode,
+        full_cron=full_cron,
+        dual=dual and not full,
+    )
 
 
 @app.command()

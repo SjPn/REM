@@ -32,7 +32,106 @@
       <div class="ov-l">Дней в истории</div>
       <div class="ov-sub">по одному снимку в сутки</div>
     </div>
+    {% if coverage %}
+    <div class="ov-card {% if coverage.all_ready %}is-deal{% else %}is-warn{% endif %}">
+      <div class="ov-n">{{ coverage.sources_ready_for_vanish }}/{{ coverage.sources_total }}</div>
+      <div class="ov-l">Источников готовы к vanish</div>
+      <div class="ov-sub">порог ≥ {{ '%.0f'|format(coverage.target_ratio * 100) }}%</div>
+    </div>
+    {% endif %}
   </section>
+
+  {% if coverage and coverage.sources %}
+  <section class="section">
+    <div class="section-head">
+      <h2>Покрытие сбора</h2>
+      <span class="muted">seen / active · vanish только при ≥ {{ '%.0f'|format(coverage.target_ratio * 100) }}%</span>
+    </div>
+    <p class="page-lead" style="margin-top:0;">
+      Watch ежедневно без vanish · полный прогон реже ·
+      <strong>detail-enrich ≠ coverage</strong> ленты.
+      API: <code>/api/coverage</code>
+    </p>
+    <div class="table-wrap">
+      <table class="market-table">
+        <thead>
+          <tr>
+            <th>Источник</th>
+            <th>Активных</th>
+            <th>Увидели</th>
+            <th>Coverage</th>
+            <th>Vanish</th>
+            <th>Последний crawl</th>
+            <th>Комментарий</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in coverage.sources %}
+          <tr>
+            <td><strong>{{ s.source }}</strong></td>
+            <td class="num">{{ s.active }}</td>
+            <td class="num">{% if s.last_seen is not none %}{{ s.last_seen }}{% else %}—{% endif %}</td>
+            <td class="num">
+              {% if s.ratio is not none %}
+                <strong>{{ '%.0f'|format(s.ratio * 100) }}%</strong>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if s.vanish_ok %}
+                <span class="tag below">можно</span>
+              {% else %}
+                <span class="tag warn">рано</span>
+              {% endif %}
+            </td>
+            <td class="muted">
+              {% if s.last_finished_at %}{{ s.last_finished_at[:16]|replace('T', ' ') }}{% else %}—{% endif %}
+              {% if s.last_pages %} · {{ s.last_pages }} стр.{% endif %}
+            </td>
+            <td class="muted" style="max-width:22rem;">{{ s.note }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if recent_crawls %}
+  <section class="section">
+    <div class="section-head">
+      <h2>Последние crawl</h2>
+      <span class="muted">listings_seen и был бы ли vanish</span>
+    </div>
+    <div class="table-wrap">
+      <table class="market-table">
+        <thead>
+          <tr>
+            <th>Когда</th>
+            <th>Источник</th>
+            <th>Статус</th>
+            <th>Seen</th>
+            <th>Active</th>
+            <th>Ratio</th>
+            <th>Vanish?</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in recent_crawls %}
+          <tr>
+            <td class="muted">{{ (c.finished_at or c.started_at or '')[:16]|replace('T', ' ') }}</td>
+            <td>{{ c.source }}</td>
+            <td>{{ c.status }}</td>
+            <td class="num">{{ c.listings_seen }}</td>
+            <td class="num">{{ c.active_now }}</td>
+            <td class="num">{% if c.ratio is not none %}{{ '%.0f'|format(c.ratio * 100) }}%{% else %}—{% endif %}</td>
+            <td>{% if c.vanish_would_ok %}<span class="tag below">ok</span>{% else %}<span class="tag warn">skip</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
 
   <section class="section chart-grid">
     <div class="chart-card">

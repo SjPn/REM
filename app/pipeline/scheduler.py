@@ -58,23 +58,65 @@ def run_scheduled_crawl(*, mode: str = "watch") -> dict:
     return summary
 
 
-def start_scheduler(cron: str | None = None, *, mode: str = "watch") -> None:
+def start_scheduler(
+    cron: str | None = None,
+    *,
+    mode: str = "watch",
+    full_cron: str | None = None,
+    dual: bool = False,
+) -> None:
+    """Arm crawl jobs.
+
+    dual=True: daily watch (no vanish) + weekly full (vanish if coverage OK).
+    dual=False: single job for ``mode`` on ``cron``.
+    """
     settings = get_settings()
-    expr = cron or settings.crawl_schedule_cron
-    trigger = _parse_cron(expr)
     scheduler = BlockingScheduler()
-    scheduler.add_job(
-        lambda: run_scheduled_crawl(mode=mode),
-        trigger=trigger,
-        id="daily_crawl",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    logger.info(
-        "Scheduler armed cron=%r mode=%s next roughly daily; now=%s",
-        expr,
-        mode,
-        datetime.now(),
-    )
+
+    if dual:
+        watch_expr = cron or settings.crawl_schedule_cron
+        full_expr = full_cron or settings.full_crawl_schedule_cron
+        scheduler.add_job(
+            lambda: run_scheduled_crawl(mode="watch"),
+            trigger=_parse_cron(watch_expr),
+            id="daily_watch",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            lambda: run_scheduled_crawl(mode="full"),
+            trigger=_parse_cron(full_expr),
+            id="weekly_full",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            "Scheduler dual: watch=%r full=%r now=%s",
+            watch_expr,
+            full_expr,
+            datetime.now(),
+        )
+    else:
+        expr = cron or (
+            settings.full_crawl_schedule_cron
+            if mode == "full"
+            else settings.crawl_schedule_cron
+        )
+        scheduler.add_job(
+            lambda: run_scheduled_crawl(mode=mode),
+            trigger=_parse_cron(expr),
+            id="daily_crawl",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            "Scheduler single cron=%r mode=%s now=%s",
+            expr,
+            mode,
+            datetime.now(),
+        )
+
     scheduler.start()

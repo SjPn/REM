@@ -1187,6 +1187,10 @@ def stats_page(
     series = series_for_charts(db, limit=90)
     market = compute_all_market_stats(db)
     inventory = count_active_inventory(db)
+    from app.domain.coverage import coverage_report, recent_crawls
+
+    coverage = coverage_report(db)
+    crawls = recent_crawls(db, limit=12)
     market_slice = market["sale"] if mode == "sale" else pick_rent_market_slice(market)
     stress_map = {s.district: s for s in compute_seller_stress(db, deal_type=mode)}
     mode_rows = _mode_district_rows(
@@ -1218,6 +1222,8 @@ def stats_page(
             "latest": latest,
             "mode_rows": mode_rows,
             "chart_json": json.dumps(chart_payload, ensure_ascii=False),
+            "coverage": coverage,
+            "recent_crawls": crawls,
         },
     )
 

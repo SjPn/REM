@@ -46,11 +46,17 @@ class Settings(BaseSettings):
     # Vanish only if crawl saw at least this share of active listings for the source.
     # 0.55 was too weak: 15 pages easily pass and mass-vanish the long tail.
     vanish_min_active_ratio: float = 0.85
-    # Daily scheduler (local time). Default: every day at 07:00
+    # Daily watch (local time). Default: every day at 07:00
     crawl_schedule_cron: str = "0 7 * * *"
+    # Weekly full crawl + vanish (only if coverage allows). Default: Sunday 03:00
+    full_crawl_schedule_cron: str = "0 3 * * 0"
     scheduler_max_pages: int = 8
     scheduler_max_details: int = 80
-    backfill_max_pages: int = 20
+    backfill_max_pages: int = 25
+    # LUN inventory is huge — list pages for coverage (not detail-enrich).
+    backfill_lun_max_pages: int = 80
+    # Ceiling when backfill --until-coverage keeps raising pages.
+    backfill_coverage_max_pages: int = 120
     backfill_max_details: int = 200
     # Lightweight watch crawl: first pages only, enrich new/changed cards only.
     watch_max_pages: int = 1

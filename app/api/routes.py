@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.db.models import CrawlRun, DealHypothesis, Listing, Property, PropertyEvent
+from app.db.models import DealHypothesis, Listing, Property, PropertyEvent
 from app.pipeline.demo import seed_demo_dataset
 from app.pipeline.reconcile import rescore_all_vanished
 from app.pipeline.runner import run_crawl
@@ -146,21 +146,18 @@ def list_events(
 
 @router.get("/crawls")
 def list_crawls(limit: int = 20, db: Session = Depends(get_db)):
-    rows = db.scalars(
-        select(CrawlRun).order_by(CrawlRun.started_at.desc()).limit(limit)
-    ).all()
-    return [
-        {
-            "id": r.id,
-            "source": r.source,
-            "status": r.status,
-            "started_at": r.started_at,
-            "finished_at": r.finished_at,
-            "listings_seen": r.listings_seen,
-            "error": r.error,
-        }
-        for r in rows
-    ]
+    from app.domain.coverage import recent_crawls
+
+    return recent_crawls(db, limit=limit)
+
+
+@router.get("/coverage")
+def coverage(db: Session = Depends(get_db)):
+    from app.domain.coverage import coverage_report, recent_crawls
+
+    report = coverage_report(db)
+    report["recent_crawls"] = recent_crawls(db, limit=20)
+    return report
 
 
 @router.post("/crawl")
