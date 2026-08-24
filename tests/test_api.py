@@ -37,3 +37,13 @@ def test_health_and_demo_seed():
     assert client.get("/").status_code == 200
     assert client.get("/stats").status_code == 200
     assert "медиана" in client.get("/").text.lower()
+
+
+def test_dashboard_empty_price_query_ok():
+    """HTML forms submit price_min=&area_min= — must not 422."""
+    client = TestClient(app)
+    resp = client.get(
+        "/?deal_type=sale&seller=owner&price_min=&price_max=&area_min=&area_max="
+    )
+    assert resp.status_code == 200
+    assert "detail" not in resp.text or "float_parsing" not in resp.text

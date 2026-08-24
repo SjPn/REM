@@ -74,9 +74,14 @@ def _days_on_market(first_seen_at: datetime | None) -> int | None:
     return max(0, (datetime.now(timezone.utc) - fs).days)
 
 
-def _parse_optional_float(value: float | None) -> float | None:
+def _parse_optional_float(value: float | str | None) -> float | None:
+    """Accept missing / empty form fields (browsers send price_min=)."""
     if value is None:
         return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -621,10 +626,11 @@ def dashboard(
     opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
     below_market: int = Query(0, ge=0, le=1),
     sort: str = Query("newest"),
-    price_min: float | None = Query(None),
-    price_max: float | None = Query(None),
-    area_min: float | None = Query(None),
-    area_max: float | None = Query(None),
+    # str: HTML forms send empty strings (price_min=), not omit the key.
+    price_min: str | None = Query(None),
+    price_max: str | None = Query(None),
+    area_min: str | None = Query(None),
+    area_max: str | None = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=10, le=100),
 ):
