@@ -37,18 +37,31 @@
   <section class="section chart-grid">
     <div class="chart-card">
       <div class="section-head tight">
-        <h2>Медиана $/м² · Киев</h2>
-        <span class="muted">продажа и аренда</span>
+        <h2>Медиана $/м² · продажа</h2>
+        <span class="muted">Киев · ежедневно</span>
       </div>
       <div class="chart-box">
-        <canvas id="chart-median" aria-label="График медианы"></canvas>
+        <canvas id="chart-median-sale" aria-label="График медианы продажи"></canvas>
       </div>
       {% if series_n < 2 %}
-        <p class="empty chart-hint">Пока одна точка. График наполнится после следующих сборов (ежедневно).</p>
+        <p class="empty chart-hint">Пока одна точка. График наполнится после следующих сборов.</p>
       {% endif %}
     </div>
 
     <div class="chart-card">
+      <div class="section-head tight">
+        <h2>Медиана $/м² · аренда</h2>
+        <span class="muted">Киев · $/м²·мес</span>
+      </div>
+      <div class="chart-box">
+        <canvas id="chart-median-rent" aria-label="График медианы аренды"></canvas>
+      </div>
+      {% if series_n < 2 %}
+        <p class="empty chart-hint">Пока одна точка. График наполнится после следующих сборов.</p>
+      {% endif %}
+    </div>
+
+    <div class="chart-card chart-wide">
       <div class="section-head tight">
         <h2>Объявлений в сети</h2>
         <span class="muted">продажа / аренда</span>
@@ -139,52 +152,45 @@
   }
 
   afterChartsReady(function () {
-    const medianCtx = document.getElementById('chart-median');
-    if (medianCtx) {
-      new Chart(medianCtx, {
+    const saleCtx = document.getElementById('chart-median-sale');
+    if (saleCtx) {
+      new Chart(saleCtx, {
         type: 'line',
         data: {
           labels: data.labels,
-          datasets: [
-            {
-              label: 'Продажа · медиана',
-              data: data.sale_median,
-              borderColor: accent,
-              backgroundColor: 'rgba(12, 107, 92, 0.12)',
-              tension: 0.25,
-              spanGaps: true,
-              pointRadius: data.labels.length < 3 ? 4 : 2
-            },
-            {
-              label: 'Аренда · медиана',
-              data: data.rent_median,
-              borderColor: accent2,
-              backgroundColor: 'rgba(154, 77, 18, 0.1)',
-              tension: 0.25,
-              spanGaps: true,
-              yAxisID: 'y1',
-              pointRadius: data.labels.length < 3 ? 4 : 2
-            }
-          ]
+          datasets: [{
+            label: 'Продажа · медиана',
+            data: data.sale_median,
+            borderColor: accent,
+            backgroundColor: 'rgba(12, 107, 92, 0.12)',
+            fill: true,
+            tension: 0.25,
+            spanGaps: true,
+            pointRadius: data.labels.length < 3 ? 4 : 2
+          }]
         },
-        options: {
-          ...lineOpts(),
-          scales: {
-            x: { ticks: { color: muted }, grid: { color: grid } },
-            y: {
-              position: 'left',
-              title: { display: true, text: 'продажа $/м²', color: muted },
-              ticks: { color: muted },
-              grid: { color: grid }
-            },
-            y1: {
-              position: 'right',
-              title: { display: true, text: 'аренда $/м²·мес', color: muted },
-              ticks: { color: muted },
-              grid: { drawOnChartArea: false }
-            }
-          }
-        }
+        options: lineOpts('продажа $/м²')
+      });
+    }
+
+    const rentCtx = document.getElementById('chart-median-rent');
+    if (rentCtx) {
+      new Chart(rentCtx, {
+        type: 'line',
+        data: {
+          labels: data.labels,
+          datasets: [{
+            label: 'Аренда · медиана',
+            data: data.rent_median,
+            borderColor: accent2,
+            backgroundColor: 'rgba(154, 77, 18, 0.1)',
+            fill: true,
+            tension: 0.25,
+            spanGaps: true,
+            pointRadius: data.labels.length < 3 ? 4 : 2
+          }]
+        },
+        options: lineOpts('аренда $/м²·мес')
       });
     }
 

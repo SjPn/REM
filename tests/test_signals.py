@@ -46,8 +46,46 @@ def test_below_market_hint():
 
 def test_classify_seller():
     assert classify_seller(agency="АН Київ", phone="380501112233", phone_listing_count=1) == "agency"
-    assert classify_seller(agency=None, phone="380501112233", phone_listing_count=5) == "agency"
+    assert (
+        classify_seller(
+            agency=None,
+            phone="380501112233",
+            phone_listing_count=5,
+            phone_property_count=4,
+        )
+        == "agency"
+    )
     assert classify_seller(agency=None, phone="380501112233", title="Офіс власника", phone_listing_count=1) == "owner"
+    assert (
+        classify_seller(
+            agency=None,
+            phone="380501112233",
+            title="Офіс",
+            phone_listing_count=2,
+            phone_property_count=1,
+            phone_sources_on_property=2,
+        )
+        == "owner"
+    )
+    assert (
+        classify_seller(
+            agency=None,
+            phone="380501112233",
+            description="Комісія агента 50%",
+            phone_listing_count=1,
+            phone_property_count=1,
+        )
+        == "agency"
+    )
+    assert (
+        classify_seller(
+            agency=None,
+            phone="380501112233",
+            portal_seller_type="private",
+            phone_property_count=1,
+        )
+        == "owner"
+    )
 
 
 def test_count_active_inventory_shape():

@@ -212,6 +212,13 @@ class OlxScraper:
         lat = geo.get("lat")
         lon = geo.get("lon")
         description = clean_text(ad.get("description"), limit=5000)
+        is_business = ad.get("isBusiness")
+        if is_business is True:
+            seller_type = "agency"
+        elif is_business is False:
+            seller_type = "private"
+        else:
+            seller_type = None
 
         return RawListing(
             source=self.source,
@@ -230,10 +237,13 @@ class OlxScraper:
             district=district,
             lat=float(lat) if lat is not None else None,
             lon=float(lon) if lon is not None else None,
+            agency=fix_mojibake((ad.get("user") or {}).get("name")) if is_business else None,
             extra={
                 "snippet": title[:400],
                 "olx_status": ad.get("status"),
                 "seller": fix_mojibake((ad.get("user") or {}).get("name")),
+                "seller_type": seller_type,
+                "isBusiness": is_business,
             },
         )
 

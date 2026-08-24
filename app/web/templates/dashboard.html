@@ -292,6 +292,15 @@
                 {% if x.address_raw %}{{ x.address_raw }}{% else %}<span class="warn-text">адрес не найден</span>{% endif %}
                 {% if x.district %} · {{ district_ru(x.district) }}{% endif %}
               </div>
+              {% if x.phone %}
+                <div class="listing-phone">
+                  {% if sig.phone_tel %}
+                    <a href="{{ sig.phone_tel }}">{{ sig.phone_display or fmt_phone(x.phone) }}</a>
+                  {% else %}
+                    {{ sig.phone_display or fmt_phone(x.phone) }}
+                  {% endif %}
+                </div>
+              {% endif %}
             </div>
             <div class="listing-side">
               <div class="listing-metrics">

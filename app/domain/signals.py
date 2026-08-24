@@ -463,6 +463,20 @@ _OWNER_RE = re.compile(
     re.IGNORECASE,
 )
 
+_COMMISSION_AGENCY_RE = re.compile(
+    r"("
+    r"комісі[яї]\s*(?:агент|ріелтор|риелтор|\d)|"
+    r"комисси[яи]\s*(?:агент|риелтор|\d)|"
+    r"(?:агент|ріелтор|риелтор)\s*коміс|"
+    r"50\s*%\s*коміс|"
+    r"commission\s*(?:for\s*)?agent"
+    r")",
+    re.IGNORECASE,
+)
+
+_PORTAL_OWNER = frozenset({"owner", "private", "private_person", "від власника", "собственник"})
+_PORTAL_AGENCY = frozenset({"agency", "agent", "realtor", "broker", "агентство", "ріелтор"})
+
 
 def classify_seller(
     *,
@@ -471,27 +485,57 @@ def classify_seller(
     title: str | None = None,
     description: str | None = None,
     phone_listing_count: int = 1,
+    phone_property_count: int = 1,
+    phone_sources_on_property: int = 1,
+    portal_seller_type: str | None = None,
 ) -> str:
     """owner | agency | unknown — heuristic only.
 
-    Best signals (strong → weak):
-    1) agency name / realtor keywords → agency
-    2) same phone on many listings → agency
-    3) explicit «від власника» + unique phone → owner
-    4) unique phone (1 listing), no agency markers → owner
+    Strong → weak:
+    1) explicit portal seller_type
+    2) agency name / realtor keywords (unless owner hint)
+    3) same phone on many *properties* (≥3) → agency
+    4) commission-agent phrases → agency
+    5) owner text + few properties → owner
+    6) same phone on ≥2 portals for *one* property, unique elsewhere → owner
+    7) unique phone (1 property), no agency markers → owner
     """
     blob = " ".join(x for x in (agency, title, description) if x)
     owner_hint = bool(_OWNER_RE.search(blob or ""))
+    agency_hint = bool(_AGENCY_RE.search(blob or ""))
+    commission_hint = bool(_COMMISSION_AGENCY_RE.search(blob or ""))
+
+    portal = (portal_seller_type or "").strip().lower()
+    if portal in _PORTAL_OWNER or any(x in portal for x in ("власник", "собственник", "private")):
+        if phone_property_count <= 2:
+            return "owner"
+    if portal in _PORTAL_AGENCY or any(x in portal for x in ("агент", "ріелтор", "риелтор", "agency")):
+        return "agency"
+
     if agency and agency.strip() and not owner_hint:
         return "agency"
-    if _AGENCY_RE.search(blob or "") and not owner_hint:
+    if agency_hint and not owner_hint:
         return "agency"
-    if phone_listing_count >= 3:
+    # Unique properties beat raw listing count (duplicates across portals).
+    if phone_property_count >= 3:
         return "agency"
-    if owner_hint and phone_listing_count <= 2:
+    if phone_listing_count >= 8 and phone_property_count >= 2:
+        return "agency"
+    if commission_hint and not owner_hint:
+        return "agency"
+
+    if owner_hint and phone_property_count <= 2:
         return "owner"
-    if phone and phone_listing_count == 1 and not _AGENCY_RE.search(blob or ""):
+    # Same contact across portals for one object, not a multi-object agent book.
+    if (
+        phone
+        and phone_sources_on_property >= 2
+        and phone_property_count == 1
+        and not agency_hint
+    ):
         return "owner"
-    if phone and phone_listing_count == 2 and owner_hint:
+    if phone and phone_property_count == 1 and not agency_hint and not commission_hint:
+        return "owner"
+    if phone and phone_property_count == 2 and owner_hint:
         return "owner"
     return "unknown"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -349,17 +350,80 @@ def _period_since(period: str | None) -> datetime | None:
 
 
 def _phone_freq(db: Session) -> Counter[str]:
+    """Legacy listing-count map (kept for callers that only need frequency)."""
+    intel = _phone_intel(db)
+    return Counter({d: int(v["listings"]) for d, v in intel.items()})
+
+
+def _phone_intel(db: Session) -> dict[str, dict]:
+    """Per phone digits: listing count, unique properties, sources per property."""
     from app.domain.ttl_cache import cache_get
 
-    def _build() -> Counter[str]:
-        counts: Counter[str] = Counter()
-        for (phone,) in db.execute(select(Listing.phone).where(Listing.phone.is_not(None))):
+    def _build() -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        rows = db.execute(
+            select(Listing.phone, Listing.property_id, Listing.source).where(
+                Listing.phone.is_not(None)
+            )
+        ).all()
+        for phone, pid, source in rows:
             digits = phone_digits(phone)
-            if digits:
-                counts[digits] += 1
-        return counts
+            if not digits:
+                continue
+            slot = out.setdefault(
+                digits,
+                {"listings": 0, "properties": set(), "prop_sources": {}},
+            )
+            slot["listings"] += 1
+            if pid is not None:
+                ipid = int(pid)
+                slot["properties"].add(ipid)
+                srcs = slot["prop_sources"].setdefault(ipid, set())
+                if source:
+                    srcs.add(str(source))
+        # freeze sets for cache safety
+        frozen: dict[str, dict] = {}
+        for d, slot in out.items():
+            frozen[d] = {
+                "listings": int(slot["listings"]),
+                "properties": frozenset(slot["properties"]),
+                "prop_sources": {
+                    pid: frozenset(srcs) for pid, srcs in slot["prop_sources"].items()
+                },
+            }
+        return frozen
 
-    return cache_get("phone_freq", 120.0, _build)
+    return cache_get("phone_intel", 120.0, _build)
+
+
+def _fmt_phone(phone: str | None) -> str:
+    if not phone:
+        return ""
+    digits = re.sub(r"\D+", "", phone)
+    if len(digits) >= 12 and digits.startswith("380"):
+        local = digits[-9:]
+        return f"+380 {local[:2]} {local[2:5]} {local[5:7]} {local[7:9]}"
+    if len(digits) == 10 and digits.startswith("0"):
+        return f"+38 {digits[:3]} {digits[3:6]} {digits[6:8]} {digits[8:10]}"
+    if len(digits) == 9:
+        return f"+380 {digits[:2]} {digits[2:5]} {digits[5:7]} {digits[7:9]}"
+    return phone.strip()
+
+
+def _tel_href(phone: str | None) -> str | None:
+    digits = phone_digits(phone)
+    if not digits:
+        return None
+    # UA display digits are last 10; dial with country code.
+    if len(digits) == 10 and digits.startswith("0"):
+        return f"tel:+38{digits}"
+    if digits.startswith("380"):
+        return f"tel:+{digits}"
+    return f"tel:+{digits}"
+
+
+templates.env.globals["fmt_phone"] = _fmt_phone
+templates.env.globals["tel_href"] = _tel_href
 
 
 def _portal_counts(db: Session, property_ids: list[int]) -> dict[int, int]:
@@ -474,7 +538,7 @@ def _annotate_listings(
         d.district: d.median_psm for d in market["rent_with_opex"].districts
     }
     rent_all_med = {d.district: d.median_psm for d in market["rent"].districts}
-    phones = _phone_freq(db)
+    phones = _phone_intel(db)
     pids = [x.property_id for x in listings if x.property_id is not None]
     portals = _portal_counts(db, pids)
     spreads = _portal_spreads(db, pids)
@@ -514,20 +578,35 @@ def _annotate_listings(
         if is_excluded_from_stats(x):
             hint = MarketHint(False, None, hint.ref_median_psm, hint.district)
         digits = phone_digits(x.phone)
+        intel = phones.get(digits) if digits else None
+        listing_n = int(intel["listings"]) if intel else 1
+        prop_n = len(intel["properties"]) if intel else 1
+        sources_on_prop = 1
+        if intel and x.property_id is not None:
+            sources_on_prop = len(intel["prop_sources"].get(int(x.property_id), ())) or 1
+        extra = x.raw_extra or {}
+        portal_seller = extra.get("seller_type") or extra.get("seller") or extra.get(
+            "advertiser_type"
+        )
         seller = classify_seller(
             agency=x.agency,
             phone=x.phone,
             title=x.title,
             description=x.description,
-            phone_listing_count=phones.get(digits, 1) if digits else 1,
+            phone_listing_count=listing_n,
+            phone_property_count=prop_n,
+            phone_sources_on_property=sources_on_prop,
+            portal_seller_type=str(portal_seller) if portal_seller else None,
         )
-        extra = x.raw_extra or {}
         spread = spreads.get(x.property_id) if x.property_id else None
         drop = price_drops.get(x.id)
         out[x.id] = {
             "below_market": hint.below_market,
             "discount_pct": hint.discount_pct,
             "seller": seller,
+            "phone_display": _fmt_phone(x.phone),
+            "phone_tel": _tel_href(x.phone),
+            "phone_property_count": prop_n,
             "portals": portals.get(x.property_id, 1) if x.property_id else 1,
             "portal_spread_pct": spread.get("spread_pct") if spread else None,
             "portal_sources": spread.get("sources") if spread else None,

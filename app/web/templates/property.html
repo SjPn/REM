@@ -46,6 +46,13 @@
             {% if sig.cap_rate_pct %}<span class="tag">доходность {{ sig.cap_rate_pct }}%</span>{% endif %}
           </div>
           <div class="listing-addr">{{ x.address_raw or '—' }}</div>
+          {% if x.phone %}
+            <div class="listing-phone">
+              {% set ph = fmt_phone(x.phone) %}
+              {% set href = tel_href(x.phone) %}
+              {% if href %}<a href="{{ href }}">{{ ph }}</a>{% else %}{{ ph }}{% endif %}
+            </div>
+          {% endif %}
         </div>
         <div class="listing-side">
           <div class="price">{{ fmt_price(x.price, x.currency) }}</div>

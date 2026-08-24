@@ -38,6 +38,7 @@ def test_classify_owner_by_unique_phone_and_text():
             phone="380501112233",
             title="Офіс від власника",
             phone_listing_count=1,
+            phone_property_count=1,
         )
         == "owner"
     )
@@ -56,6 +57,7 @@ def test_classify_owner_by_unique_phone_and_text():
             phone="380501112233",
             title="Офіс",
             phone_listing_count=5,
+            phone_property_count=5,
         )
         == "agency"
     )

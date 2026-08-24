@@ -128,9 +128,12 @@ def upsert_listing(
         finance_extra_hint = {}
 
     now = _aware(seen_at)
+    scrape_extra = dict(raw.extra or {})
     finance_extra = _merge_finance_signals(raw)
     if finance_extra_hint:
         finance_extra = {**finance_extra, **finance_extra_hint}
+    # Keep scraper metadata (seller_type, isBusiness, …) + finance signals.
+    finance_extra = {**scrape_extra, **finance_extra}
     raw.extra = finance_extra
     listing = db.scalar(
         select(Listing).where(
