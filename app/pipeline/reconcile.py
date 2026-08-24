@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 _ACTIVE_STATUSES = (ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value)
 
 
+def _aware(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _count_active_listings(db: Session, property_id: int) -> int:
     return (
         db.scalar(
@@ -279,14 +287,14 @@ def create_or_update_deal_hypothesis(
         elif any(x in raw_status for x in ("здан", "арендован", "орендован", "rent")):
             listing.status = ListingStatus.RENTED_MARKED.value
 
-    vanished_at = listing.vanished_at or utcnow()
+    vanished_at = _aware(listing.vanished_at) or utcnow()
     days_since = (utcnow() - vanished_at).total_seconds() / 86400.0
 
     result = score_deal(
         DealScoreInput(
             deal_type=DealType(listing.deal_type),
             vanished_at=vanished_at,
-            first_seen_at=listing.first_seen_at,
+            first_seen_at=_aware(listing.first_seen_at) or utcnow(),
             last_price=listing.price,
             previous_price=prev_price,
             price_drop_count=listing.price_drop_count or 0,
@@ -359,10 +367,16 @@ def rescore_all_vanished(
         if _count_active_listings(db, int(pid)) > 0:
             continue
         rep = _pick_representative_listing(db, int(pid))
-        if rep and create_or_update_deal_hypothesis(
-            db, rep, allow_likely_deal=allow_likely_deal
-        ):
-            n += 1
+        if not rep:
+            continue
+        try:
+            if create_or_update_deal_hypothesis(
+                db, rep, allow_likely_deal=allow_likely_deal
+            ):
+                n += 1
+        except Exception:  # noqa: BLE001
+            logger.exception("rescore failed for property_id=%s", pid)
+            db.rollback()
     db.commit()
     return n
 
