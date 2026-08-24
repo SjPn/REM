@@ -294,10 +294,12 @@
               </div>
               {% if x.phone %}
                 <div class="listing-phone">
-                  {% if sig.phone_tel %}
-                    <a href="{{ sig.phone_tel }}">{{ sig.phone_display or fmt_phone(x.phone) }}</a>
+                  {% set ph = sig.phone_display or fmt_phone(x.phone) or x.phone %}
+                  {% set href = sig.phone_tel or tel_href(x.phone) %}
+                  {% if href %}
+                    <a href="{{ href }}">{{ ph }}</a>
                   {% else %}
-                    {{ sig.phone_display or fmt_phone(x.phone) }}
+                    {{ ph }}
                   {% endif %}
                 </div>
               {% endif %}
