@@ -258,27 +258,51 @@ def normalize_listing_price(
     ):
         area_f = float(area_sqm)
         psm_f = float(parsed_psm)
-        options = [float(parsed_total), round(psm_f * area_f, 2)]
-        if price is not None:
-            options.append(float(price))
-        total_f = min(
-            options,
-            key=lambda t: abs(t / area_f - psm_f) / max(psm_f, 1.0),
-        )
-        if price is not None:
-            stored = float(price)
-            stored_err = abs(stored / area_f - psm_f) / max(psm_f, 1.0)
-            if stored_err < 0.06:
-                total_f = stored
-        total_usd = to_usd(total_f, parsed_cur or cur)
+        total_cur = (parsed_cur or currency or cur or "USD").upper()
+        total_f = float(parsed_total)
+        # Prefer an already-plausible total over reconstructing from $/м².
+        # Description often has an alternative offer ("весь поверх 18$/м²") that
+        # must not override the card total (e.g. 316 769 ₴).
+        total_usd = to_usd(total_f, total_cur)
+        implied_usd = (total_usd / area_f) if total_usd else None
+        total_ok = implied_usd is not None and not psm_suspicious(deal_type, implied_usd)
+
+        if not total_ok:
+            rebuilt = round(psm_f * area_f, 2)
+            rebuilt_usd = to_usd(rebuilt, total_cur)
+            rebuilt_implied = (rebuilt_usd / area_f) if rebuilt_usd else None
+            if rebuilt_implied is not None and not psm_suspicious(deal_type, rebuilt_implied):
+                total_f = rebuilt
+                total_usd = rebuilt_usd
+                implied_usd = rebuilt_implied
+            elif price is not None:
+                stored = float(price)
+                stored_usd = to_usd(stored, total_cur)
+                stored_implied = (stored_usd / area_f) if stored_usd else None
+                if stored_implied is not None and not psm_suspicious(
+                    deal_type, stored_implied
+                ):
+                    total_f = stored
+                    total_usd = stored_usd
+                    implied_usd = stored_implied
+
+        # Keep explicit $/м² only when it agrees with the chosen total (USD ballpark).
+        # "18$/м²" is USD even when the card total is UAH — alt offers must not stick.
+        out_psm = round(total_f / area_f, 4)
+        psm_as_usd = to_usd(psm_f, "USD")
+        if (
+            implied_usd is not None
+            and psm_as_usd is not None
+            and abs(psm_as_usd - implied_usd) / max(implied_usd, 0.5) <= 0.12
+        ):
+            out_psm = psm_f
+
         return PriceNorm(
             total_f,
-            parsed_cur or currency or cur,
-            psm_f,
+            total_cur,
+            out_psm,
             False,
-            suspicious_psm=psm_suspicious(
-                deal_type, (total_usd / area_f) if total_usd else None
-            ),
+            suspicious_psm=psm_suspicious(deal_type, implied_usd),
             detail="text_total_and_psm",
         )
 

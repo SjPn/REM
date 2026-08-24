@@ -121,6 +121,31 @@ def test_normalize_does_not_multiply_monthly_total():
     assert norm.price_per_sqm == 14
 
 
+def test_normalize_ignores_alt_offer_psm_in_description():
+    """m2bomber: card total 316 769 ₴, description has unrelated '18$/м²' for whole floor."""
+    description = (
+        "Оренда офісу, вул. Велика Житомирська, Центр "
+        "Київська область, Київ, Шевченківський "
+        "316 769 ₴ 322 м² поверх 11 / 12 "
+        "Також є можливість орендувати весь поверх - 360м2, 18$/м2 ПДВ "
+        "зміна ціни 20 серп. 2026 - 316 769 ₴"
+    )
+    norm = normalize_listing_price(
+        price=316_769,
+        currency="UAH",
+        area_sqm=322,
+        deal_type="rent",
+        title="Оренда офісу, вул. Велика Житомирська, Центр",
+        description=description,
+    )
+    assert norm.price == pytest.approx(316_769, rel=0.01)
+    assert norm.currency == "UAH"
+    assert norm.price != pytest.approx(18 * 322, rel=0.01)
+    # $/м² from alt offer must not stick; use total/area in listing currency
+    assert norm.price_per_sqm == pytest.approx(316_769 / 322, rel=0.02)
+    assert not norm.suspicious_psm
+
+
 def test_normalize_leaves_sane_total():
     norm = normalize_listing_price(
         price=2500,
