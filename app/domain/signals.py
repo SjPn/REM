@@ -198,14 +198,17 @@ def listing_ids_for_price_drops(
         seen.add(int(lid))
         ids.append(int(lid))
     if deal_type and ids:
-        allowed = set(
-            db.scalars(
-                select(Listing.id).where(
-                    Listing.id.in_(ids),
-                    Listing.deal_type == deal_type,
-                )
-            ).all()
-        )
+        allowed: set[int] = set()
+        for i in range(0, len(ids), 400):
+            chunk = ids[i : i + 400]
+            allowed.update(
+                db.scalars(
+                    select(Listing.id).where(
+                        Listing.id.in_(chunk),
+                        Listing.deal_type == deal_type,
+                    )
+                ).all()
+            )
         ids = [i for i in ids if i in allowed]
     return ids
 

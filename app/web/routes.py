@@ -425,29 +425,57 @@ def _tel_href(phone: str | None) -> str | None:
 templates.env.globals["fmt_phone"] = _fmt_phone
 templates.env.globals["tel_href"] = _tel_href
 
+# SQLite default SQLITE_MAX_VARIABLE_NUMBER ≈ 999; keep headroom.
+_SQL_IN_CHUNK = 400
+
+
+def _chunks(items: list, size: int = _SQL_IN_CHUNK):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def _in_chunks(column, ids: list[int]):
+    """SQLite-safe IN / OR-of-IN for large id lists."""
+    uniq = list({int(i) for i in ids if i is not None})
+    if not uniq:
+        return column == -1
+    parts = [column.in_(chunk) for chunk in _chunks(uniq)]
+    if len(parts) == 1:
+        return parts[0]
+    return or_(*parts)
+
 
 def _portal_counts(db: Session, property_ids: list[int]) -> dict[int, int]:
     if not property_ids:
         return {}
-    rows = db.execute(
-        select(Listing.property_id, func.count())
-        .where(Listing.property_id.in_(property_ids))
-        .group_by(Listing.property_id)
-    ).all()
-    return {int(pid): int(n) for pid, n in rows if pid is not None}
+    uniq = list({int(p) for p in property_ids if p is not None})
+    out: dict[int, int] = {}
+    for chunk in _chunks(uniq):
+        rows = db.execute(
+            select(Listing.property_id, func.count())
+            .where(Listing.property_id.in_(chunk))
+            .group_by(Listing.property_id)
+        ).all()
+        out.update({int(pid): int(n) for pid, n in rows if pid is not None})
+    return out
 
 
 def _portal_spreads(db: Session, property_ids: list[int]) -> dict[int, dict]:
     """For multi-portal properties: count, sources, USD price min/max and spread %."""
     if not property_ids:
         return {}
-    peers = db.scalars(
-        select(Listing).where(
-            Listing.property_id.in_(property_ids),
-            Listing.status.in_(["active", "relisted"]),
-            Listing.price.is_not(None),
+    uniq = list({int(p) for p in property_ids if p is not None})
+    peers: list[Listing] = []
+    for chunk in _chunks(uniq):
+        peers.extend(
+            db.scalars(
+                select(Listing).where(
+                    Listing.property_id.in_(chunk),
+                    Listing.status.in_(["active", "relisted"]),
+                    Listing.price.is_not(None),
+                )
+            ).all()
         )
-    ).all()
     by_pid: dict[int, list[Listing]] = {}
     for lst in peers:
         if lst.property_id is None:
@@ -493,15 +521,20 @@ def _recent_price_drop_map(
 ) -> dict[int, dict]:
     if not listing_ids:
         return {}
-    events = db.scalars(
-        select(PropertyEvent)
-        .where(
-            PropertyEvent.event_type == EventType.PRICE_CHANGED.value,
-            PropertyEvent.listing_id.in_(listing_ids),
-            PropertyEvent.occurred_at >= since,
+    uniq = list({int(i) for i in listing_ids if i is not None})
+    events: list[PropertyEvent] = []
+    for chunk in _chunks(uniq):
+        events.extend(
+            db.scalars(
+                select(PropertyEvent)
+                .where(
+                    PropertyEvent.event_type == EventType.PRICE_CHANGED.value,
+                    PropertyEvent.listing_id.in_(chunk),
+                    PropertyEvent.occurred_at >= since,
+                )
+                .order_by(PropertyEvent.occurred_at.desc())
+            ).all()
         )
-        .order_by(PropertyEvent.occurred_at.desc())
-    ).all()
     out: dict[int, dict] = {}
     for ev in events:
         if ev.listing_id is None or int(ev.listing_id) in out:
@@ -779,7 +812,7 @@ def dashboard(
         ]
         if activity_ids is not None:
             if activity_ids:
-                filters.append(Listing.id.in_(activity_ids))
+                filters.append(_in_chunks(Listing.id, activity_ids))
             else:
                 filters.append(Listing.id == -1)  # empty result
     elif activity_filter == "price_drop":
@@ -789,7 +822,7 @@ def dashboard(
         ]
         if activity_ids is not None:
             if activity_ids:
-                filters.append(Listing.id.in_(activity_ids))
+                filters.append(_in_chunks(Listing.id, activity_ids))
             else:
                 filters.append(Listing.id == -1)
     elif activity_filter == "sold":

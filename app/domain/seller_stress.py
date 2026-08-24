@@ -70,8 +70,11 @@ def compute_seller_stress(
         listing_ids = {e.listing_id for e in events if e.listing_id}
         listing_cache: dict[int, Listing] = {}
         if listing_ids:
-            for lst in db.scalars(select(Listing).where(Listing.id.in_(listing_ids))):
-                listing_cache[int(lst.id)] = lst
+            ids = list(listing_ids)
+            for i in range(0, len(ids), 400):
+                chunk = ids[i : i + 400]
+                for lst in db.scalars(select(Listing).where(Listing.id.in_(chunk))):
+                    listing_cache[int(lst.id)] = lst
 
         for ev in events:
             listing = listing_cache.get(int(ev.listing_id)) if ev.listing_id else None
