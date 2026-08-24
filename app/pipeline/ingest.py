@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 from app.db.models import Listing, ListingSnapshot, Property, PropertyEvent, utcnow
 from app.domain.enums import EventType, ListingStatus
 from app.domain.fingerprint import FingerprintInput, build_fingerprint, normalize_address
+from app.domain.property_match import (
+    find_property_match,
+    is_weak_location,
+    weak_unique_fingerprint,
+)
 from app.domain.segments import classify_segment
 from app.domain.signals import detect_opex, parse_cap_and_noi
 from app.domain.list_card import list_card_changed
@@ -134,55 +139,88 @@ def upsert_listing(
         )
     )
 
-    fingerprint = build_fingerprint(
-        FingerprintInput(
-            address=raw.address_raw,
-            area_sqm=raw.area_sqm,
-            floor=raw.floor,
-            price=raw.price,
-            currency=raw.currency,
-            property_type=raw.property_type,
-            deal_type=raw.deal_type,
-            lat=raw.lat,
-            lon=raw.lon,
-            phone=raw.phone,
-        )
+    fp_input = FingerprintInput(
+        address=raw.address_raw,
+        area_sqm=raw.area_sqm,
+        floor=raw.floor,
+        price=raw.price,
+        currency=raw.currency,
+        property_type=raw.property_type,
+        deal_type=raw.deal_type,
+        lat=raw.lat,
+        lon=raw.lon,
+        phone=raw.phone,
     )
-    prop = db.scalar(select(Property).where(Property.fingerprint == fingerprint))
-    if prop is None:
-        prop = Property(
-            fingerprint=fingerprint,
-            title=raw.title,
-            address_norm=normalize_address(raw.address_raw),
-            district=raw.district,
-            city=raw.city or "Київ",
-            property_type=raw.property_type,
-            deal_type=raw.deal_type,
-            area_sqm=raw.area_sqm,
-            floor=raw.floor,
-            lat=raw.lat,
-            lon=raw.lon,
-            first_seen_at=now,
-            last_seen_at=now,
-            is_active=True,
-        )
-        db.add(prop)
-        db.flush()
-        db.add(
-            PropertyEvent(
-                property_id=prop.id,
-                event_type=EventType.APPEARED.value,
-                occurred_at=now,
-                payload={"source": raw.source, "external_id": raw.external_id},
-            )
-        )
-    else:
+    match = find_property_match(
+        db, fp_input, source=raw.source, external_id=raw.external_id
+    )
+    match_reason = match.reason if match else None
+    if match is not None:
+        prop = match.property
         prop.last_seen_at = now
         prop.is_active = True
         if raw.title and not prop.title:
             prop.title = raw.title
         if raw.district and not prop.district:
             prop.district = raw.district
+        if raw.address_raw and (
+            not prop.address_norm or prop.fingerprint.startswith("weak")
+        ):
+            # Upgrade weak orphan identity when we finally get a street address.
+            if not is_weak_location(raw.address_raw, raw.area_sqm):
+                new_fp = build_fingerprint(fp_input)
+                existing = db.scalar(select(Property).where(Property.fingerprint == new_fp))
+                if existing is None or existing.id == prop.id:
+                    prop.fingerprint = new_fp
+                    prop.address_norm = normalize_address(raw.address_raw)
+                    prop.area_sqm = raw.area_sqm if raw.area_sqm is not None else prop.area_sqm
+                    prop.floor = raw.floor if raw.floor is not None else prop.floor
+                    match_reason = "upgraded_from_weak"
+    else:
+        weak = is_weak_location(raw.address_raw, raw.area_sqm)
+        fingerprint = (
+            weak_unique_fingerprint(raw.source, raw.external_id, raw.deal_type)
+            if weak
+            else build_fingerprint(fp_input)
+        )
+        # Race: exact fp may appear after soft-miss
+        prop = db.scalar(select(Property).where(Property.fingerprint == fingerprint))
+        if prop is None:
+            prop = Property(
+                fingerprint=fingerprint,
+                title=raw.title,
+                address_norm=normalize_address(raw.address_raw),
+                district=raw.district,
+                city=raw.city or "Київ",
+                property_type=raw.property_type,
+                deal_type=raw.deal_type,
+                area_sqm=raw.area_sqm,
+                floor=raw.floor,
+                lat=raw.lat,
+                lon=raw.lon,
+                first_seen_at=now,
+                last_seen_at=now,
+                is_active=True,
+            )
+            db.add(prop)
+            db.flush()
+            db.add(
+                PropertyEvent(
+                    property_id=prop.id,
+                    event_type=EventType.APPEARED.value,
+                    occurred_at=now,
+                    payload={
+                        "source": raw.source,
+                        "external_id": raw.external_id,
+                        "weak_identity": weak,
+                    },
+                )
+            )
+            match_reason = "weak_unique" if weak else "fingerprint_new"
+        else:
+            prop.last_seen_at = now
+            prop.is_active = True
+            match_reason = "fingerprint"
 
     write_snapshot = True
     if listing is None:
@@ -246,6 +284,21 @@ def upsert_listing(
                 )
             )
             listing.vanished_at = None
+            # Hypotheses for this property are no longer "deals".
+            from app.db.models import DealHypothesis
+            from app.domain.enums import DealBucket
+
+            for hyp in db.scalars(
+                select(DealHypothesis).where(
+                    DealHypothesis.property_id == prop.id,
+                    DealHypothesis.human_label.is_(None),
+                )
+            ):
+                hyp.bucket = DealBucket.LIKELY_WITHDRAWN.value
+                hyp.score = min(int(hyp.score or 0), 35)
+                feats = dict(hyp.features or {}) if isinstance(hyp.features, dict) else {}
+                feats["relisted_override"] = True
+                hyp.features = feats
 
         if (
             listing.price is not None
@@ -314,6 +367,8 @@ def upsert_listing(
     from app.domain.pricing import effective_listing_psm_usd, psm_suspicious
 
     extra = dict(listing.raw_extra or {})
+    if match_reason:
+        extra["match_reason"] = match_reason
     psm_usd = effective_listing_psm_usd(
         listing.price,
         listing.currency,

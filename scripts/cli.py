@@ -722,6 +722,71 @@ def prune_irrelevant() -> None:
     rprint({"removed_listings": removed, "removed_orphan_properties": orphans})
 
 
+@app.command("merge-orphans")
+def merge_orphans_cmd(dry_run: bool = typer.Option(True, help="Только показать, без записи")) -> None:
+    """Склеить Property с одним адресом+площадью±2+этажом, но разным fingerprint (цена)."""
+    from collections import defaultdict
+
+    from sqlalchemy import func, select
+
+    from app.db.models import Listing, Property
+    from app.domain.fingerprint import normalize_address, round_area
+    from app.domain.property_match import merge_properties
+
+    init_db()
+    SessionLocal = get_session_factory()
+    merged = 0
+    groups = 0
+    with SessionLocal() as db:
+        props = list(
+            db.scalars(
+                select(Property).where(
+                    Property.address_norm.is_not(None),
+                    Property.area_sqm.is_not(None),
+                )
+            ).all()
+        )
+        buckets: dict[tuple, list[Property]] = defaultdict(list)
+        for p in props:
+            addr = normalize_address(p.address_norm)
+            if not addr or len(addr) < 8:
+                continue
+            area = round_area(p.area_sqm)
+            key = (addr, p.floor, (p.deal_type or "").lower(), area)
+            buckets[key].append(p)
+
+        for key, items in buckets.items():
+            if len(items) < 2:
+                continue
+            # Also merge near areas (±2) that rounded differently — already rounded
+            # Keep the one with most listings / oldest
+            scored = []
+            for p in items:
+                n = db.scalar(
+                    select(func.count()).select_from(Listing).where(Listing.property_id == p.id)
+                ) or 0
+                scored.append((n, p.first_seen_at, p))
+            scored.sort(key=lambda x: (-x[0], x[1]))
+            keep = scored[0][2]
+            groups += 1
+            for _, _, drop in scored[1:]:
+                # Area already same band via round_area key; still check ±2 for safety
+                if abs(float(keep.area_sqm) - float(drop.area_sqm)) > 2.0:
+                    continue
+                if dry_run:
+                    rprint(
+                        f"[yellow]would merge[/yellow] #{drop.id} → #{keep.id} "
+                        f"({key[0][:40]} · {key[3]} м² · floor={key[1]})"
+                    )
+                    merged += 1
+                else:
+                    moved = merge_properties(db, keep.id, drop.id)
+                    merged += 1 if moved or True else 0
+        if not dry_run:
+            db.commit()
+    rprint({"groups": groups, "merged": merged, "dry_run": dry_run})
+
+
 @app.command("fix-mojibake")
 def fix_mojibake_cmd(
     source: Optional[str] = typer.Option("olx", help="Источник (по умолчанию olx)"),

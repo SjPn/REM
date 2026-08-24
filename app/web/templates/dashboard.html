@@ -16,6 +16,17 @@
         · медиана {{ fmt_psm(market_slice.city_median_psm, deal_type) }}
         {% if deal_type == 'rent' and rent_slice_label %} · {{ rent_slice_label }}{% endif %}
         <span class="muted"> · только активные в сети</span>
+        {% if last_updated_at %}
+          <span class="muted"> · обновлено {{ last_updated_at.strftime('%d.%m.%Y %H:%M') }}</span>
+        {% endif %}
+        {% if source_updated %}
+          <span class="muted" title="{% for s in source_updated %}{{ s.source }}: {{ s.at.strftime('%d.%m %H:%M') }}{% if not loop.last %}; {% endif %}{% endfor %}">
+            · по сайтам:
+            {% for s in source_updated[:4] %}
+              {{ s.source }} {{ s.at.strftime('%d.%m %H:%M') }}{% if not loop.last %},{% endif %}
+            {% endfor %}
+          </span>
+        {% endif %}
       </p>
     </div>
   </div>
@@ -36,6 +47,10 @@
     <a class="ov-card is-deal" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}" title="Оценка исчезнувших: похоже на сделку или сняли">
       <div class="ov-n">{{ activity_stats.likely_deals }}</div>
       <div class="ov-l">Похоже на сделку</div>
+    </a>
+    <a class="ov-card {% if activity_filter == 'sold' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=sold" title="Явная метка площадки sold/rented — отдельно от «исчезло»">
+      <div class="ov-n">{{ activity_stats.sold_or_rented }}</div>
+      <div class="ov-l">{% if deal_type == 'sale' %}Продано{% else %}Сдано{% endif %}</div>
     </a>
     {% if stats_excluded_n %}
     <a class="ov-card is-warn {% if stats_excluded_filter %}is-on{% endif %}"
@@ -123,6 +138,14 @@
           {% for d in districts %}
             <option value="{{ d }}" {% if district == d %}selected{% endif %}>{{ district_ru(d) }}</option>
           {% endfor %}
+        </select>
+
+        <label class="f-label" for="f-seller">Кто продаёт</label>
+        <select id="f-seller" name="seller">
+          <option value="">Все</option>
+          <option value="owner" {% if seller == 'owner' %}selected{% endif %}>Собственник</option>
+          <option value="agency" {% if seller == 'agency' %}selected{% endif %}>Агентство</option>
+          <option value="unknown" {% if seller == 'unknown' %}selected{% endif %}>Неизвестно</option>
         </select>
 
         <label class="f-label" for="f-period">Когда появились</label>
@@ -273,6 +296,13 @@
             <div class="listing-side">
               <div class="listing-metrics">
                 <div class="price">{{ fmt_price(x.price, x.currency) }}</div>
+                {% if activity_filter == 'price_drop' and sig.price_drop_old and sig.price_drop_new %}
+                  <div class="psm muted">
+                    было {{ fmt_price(sig.price_drop_old, sig.price_drop_currency) }}
+                    → стало {{ fmt_price(sig.price_drop_new, sig.price_drop_currency) }}
+                    {% if sig.price_drop_delta_pct is not none %}· -{{ sig.price_drop_delta_pct }}%{% endif %}
+                  </div>
+                {% endif %}
                 {% set psm = fmt_listing_psm(x.price, x.currency, x.area_sqm, x.deal_type, x.price_per_sqm) %}
                 {% if psm %}<div class="psm">{{ psm }}</div>{% endif %}
                 <div class="area">

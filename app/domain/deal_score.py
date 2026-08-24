@@ -46,6 +46,8 @@ class DealScoreInput:
     explicit_sold_or_rented: bool = False
     agency_bulk_delist: bool = False
     relisted_soon: bool = False
+    days_since_vanish: float | None = None
+    cross_source_confirmed: bool = False  # property truly multi-portal (soft/exact match)
 
 
 def _days_between(a: datetime, b: datetime) -> float:
@@ -67,32 +69,39 @@ def score_deal(inp: DealScoreInput) -> DealScoreResult:
         )
         score += 25
 
+    multi_ok = inp.cross_source_confirmed or inp.tracked_sources_for_property >= 2
     if (
-        inp.tracked_sources_for_property >= 2
+        multi_ok
+        and inp.tracked_sources_for_property >= 2
         and inp.vanished_on_sources >= inp.tracked_sources_for_property
     ):
         features.append(
             ScoreFeature(
                 "vanished_all_sources",
                 45,
-                f"Исчезло со всех отслеживаемых источников ({inp.vanished_on_sources})",
+                f"Исчезло со всех склеенных источников ({inp.vanished_on_sources})",
             )
         )
         score += 45
-    elif inp.vanished_on_sources >= 2:
+    elif multi_ok and inp.vanished_on_sources >= 2:
         features.append(
             ScoreFeature(
                 "vanished_multi_source",
                 25,
-                f"Исчезло с нескольких источников ({inp.vanished_on_sources})",
+                f"Исчезло с нескольких склеенных источников ({inp.vanished_on_sources})",
             )
         )
         score += 25
     else:
+        # Single-source vanish is weak evidence of a real deal.
         features.append(
-            ScoreFeature("vanished_single_source", 10, "Исчезло с одного источника")
+            ScoreFeature(
+                "vanished_single_source",
+                6,
+                "Исчезло с одного источника (слабый сигнал)",
+            )
         )
-        score += 10
+        score += 6
 
     if inp.price_drop_count > 0 or (
         inp.last_price is not None
@@ -157,6 +166,22 @@ def score_deal(inp: DealScoreInput) -> DealScoreResult:
             ScoreFeature("relisted", -35, "Объект быстро переопубликован")
         )
         score -= 35
+
+    # Aging: still gone after a week → stronger deal signal
+    age = inp.days_since_vanish
+    if age is None:
+        age = _days_between(inp.vanished_at, datetime.now(timezone.utc))
+    if not inp.relisted_soon:
+        if age >= 14:
+            features.append(
+                ScoreFeature("still_gone_14d", 12, "Не вернулось 14+ дней")
+            )
+            score += 12
+        elif age >= 7:
+            features.append(
+                ScoreFeature("still_gone_7d", 8, "Не вернулось 7+ дней")
+            )
+            score += 8
 
     score = max(0, min(100, score))
     if score >= settings.deal_likely_min:

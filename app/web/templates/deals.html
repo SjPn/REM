@@ -58,6 +58,7 @@
               {% else %}адрес неизвестен{% endif %}
             </div>
             <div class="listing-meta">
+              {% if c.source_label %}<span class="tag">{{ c.source_label }}</span>{% endif %}
               {% if lst and lst.property_type %}<span class="tag">{{ lst.property_type }}</span>{% endif %}
               {% if lst and lst.area_sqm %}<span class="muted">{{ lst.area_sqm }} м²</span>{% endif %}
               {% if lst %}<span class="price-inline">{{ fmt_price(lst.price, lst.currency) }}</span>{% endif %}

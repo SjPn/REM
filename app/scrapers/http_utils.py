@@ -693,7 +693,7 @@ def guess_property_type(text: str | None) -> str:
         return "industrial"
     if any(x in t for x in ("земл", "ділянка", "участок", "land")):
         return "land_commercial"
-    if any(x in t for x in ("вільного призначення", "свободного назначения", "free")):
+    if any(x in t for x in ("вільного призначення", "свободного назначения", "free purpose", "free-purpose")):
         return "free_purpose"
     return "other"
 

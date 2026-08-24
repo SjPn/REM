@@ -18,6 +18,9 @@
       <p class="page-lead" style="margin-bottom:0.85rem;">
         Одно помещение на <strong>{{ portal_compare.count }}</strong> сайтах
         ({{ portal_compare.sources|join(', ') }})
+        {% if match_reasons %}
+          · склеен по: <strong>{{ match_reasons|join(', ') }}</strong>
+        {% endif %}
         {% if portal_compare.spread_pct is not none %}
           · разница цен <strong>{{ '%.1f'|format(portal_compare.spread_pct) }}%</strong>
           ({{ '%.0f'|format(portal_compare.price_min_usd) }}–{{ '%.0f'|format(portal_compare.price_max_usd) }} $)
@@ -59,6 +62,22 @@
       {% endfor %}
     </div>
   </section>
+
+  {% if price_history %}
+  <section class="section">
+    <div class="section-head"><h2>История цен</h2></div>
+    <ul class="feed">
+      {% for e in price_history %}
+        <li>
+          <span class="tag">{{ ua_event(e.event_type) }}</span>
+          {{ e.occurred_at.strftime('%d.%m.%Y %H:%M') if e.occurred_at else '' }}
+          · было {{ fmt_price(e.payload.get('old_price'), e.payload.get('currency')) }}
+          → стало {{ fmt_price(e.payload.get('new_price'), e.payload.get('currency')) }}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
 
   <section class="section">
     <div class="section-head"><h2>Оценки возможных сделок</h2></div>

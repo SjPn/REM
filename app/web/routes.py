@@ -44,6 +44,7 @@ from app.domain.signals import (
     listing_psm_usd,
     resolve_listing_opex,
 )
+from app.domain.enums import EventType
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 router = APIRouter()
@@ -415,6 +416,46 @@ def _portal_spreads(db: Session, property_ids: list[int]) -> dict[int, dict]:
     return out
 
 
+def _recent_price_drop_map(
+    db: Session,
+    listing_ids: list[int],
+    *,
+    since: datetime,
+) -> dict[int, dict]:
+    if not listing_ids:
+        return {}
+    events = db.scalars(
+        select(PropertyEvent)
+        .where(
+            PropertyEvent.event_type == EventType.PRICE_CHANGED.value,
+            PropertyEvent.listing_id.in_(listing_ids),
+            PropertyEvent.occurred_at >= since,
+        )
+        .order_by(PropertyEvent.occurred_at.desc())
+    ).all()
+    out: dict[int, dict] = {}
+    for ev in events:
+        if ev.listing_id is None or int(ev.listing_id) in out:
+            continue
+        payload = ev.payload or {}
+        try:
+            old_p = float(payload["old_price"])
+            new_p = float(payload["new_price"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if new_p >= old_p:
+            continue
+        delta_pct = round((old_p - new_p) / old_p * 100.0, 1) if old_p > 0 else None
+        out[int(ev.listing_id)] = {
+            "old_price": old_p,
+            "new_price": new_p,
+            "delta_pct": delta_pct,
+            "currency": payload.get("currency"),
+            "occurred_at": ev.occurred_at,
+        }
+    return out
+
+
 def _annotate_listings(
     db: Session,
     listings: list[Listing],
@@ -432,6 +473,11 @@ def _annotate_listings(
     pids = [x.property_id for x in listings if x.property_id is not None]
     portals = _portal_counts(db, pids)
     spreads = _portal_spreads(db, pids)
+    price_drops = _recent_price_drop_map(
+        db,
+        [x.id for x in listings if x.id is not None],
+        since=datetime.now(timezone.utc) - timedelta(hours=24),
+    )
     out: dict[int, dict] = {}
     for x in listings:
         opex = resolve_listing_opex(x) if x.deal_type == "rent" else None
@@ -472,6 +518,7 @@ def _annotate_listings(
         )
         extra = x.raw_extra or {}
         spread = spreads.get(x.property_id) if x.property_id else None
+        drop = price_drops.get(x.id)
         out[x.id] = {
             "below_market": hint.below_market,
             "discount_pct": hint.discount_pct,
@@ -485,6 +532,10 @@ def _annotate_listings(
             "price_suspicious": bool(extra.get("price_suspicious")),
             "excluded_from_stats": is_excluded_from_stats(x),
             "dom_days": _days_on_market(x.first_seen_at),
+            "price_drop_old": drop.get("old_price") if drop else None,
+            "price_drop_new": drop.get("new_price") if drop else None,
+            "price_drop_delta_pct": drop.get("delta_pct") if drop else None,
+            "price_drop_currency": (drop.get("currency") if drop else None) or x.currency,
         }
     return out
 
@@ -564,8 +615,9 @@ def dashboard(
     q: str | None = None,
     period: str | None = None,
     district: str | None = None,
-    activity: str | None = Query(None, pattern="^(vanished|price_drop)$"),
+    activity: str | None = Query(None, pattern="^(vanished|price_drop|sold)$"),
     stats_excluded: int = Query(0, ge=0, le=1),
+    seller: str | None = Query(None, pattern="^(owner|agency|unknown)$"),
     opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
     below_market: int = Query(0, ge=0, le=1),
     sort: str = Query("newest"),
@@ -597,6 +649,19 @@ def dashboard(
     activity_stats = activity_summary(db, hours=24, deal_type=deal_type)
     watches = db.scalars(select(WatchFilter).order_by(WatchFilter.created_at.desc()).limit(20)).all()
     inventory = count_active_inventory(db)
+    last_update_q = select(func.max(Listing.last_seen_at)).where(Listing.deal_type == deal_type)
+    if source:
+        last_update_q = last_update_q.where(Listing.source == source)
+    last_updated_at = db.scalar(last_update_q)
+    source_updated_rows = db.execute(
+        select(Listing.source, func.max(Listing.last_seen_at))
+        .where(Listing.deal_type == deal_type)
+        .group_by(Listing.source)
+        .order_by(func.max(Listing.last_seen_at).desc())
+    ).all()
+    source_updated = [
+        {"source": s, "at": at} for s, at in source_updated_rows if s and at
+    ]
     stats_excluded_n = (
         db.scalar(
             select(func.count())
@@ -642,6 +707,17 @@ def dashboard(
                 filters.append(Listing.id.in_(activity_ids))
             else:
                 filters.append(Listing.id == -1)
+    elif activity_filter == "sold":
+        marked = (
+            ["sold_marked"]
+            if deal_type == "sale"
+            else ["rented_marked"]
+        )
+        filters = [
+            Listing.deal_type == deal_type,
+            Listing.status.in_(marked),
+            Listing.updated_at >= activity_since,
+        ]
     else:
         filters = [
             Listing.status.in_(["active", "relisted"]),
@@ -707,6 +783,7 @@ def dashboard(
     needs_memory = bool(
         below_market
         or opex_mode
+        or seller
         or price_min is not None
         or price_max is not None
         or activity_ids is not None
@@ -731,6 +808,10 @@ def dashboard(
         if opex_mode:
             candidates = [
                 x for x in candidates if signals_tmp.get(x.id, {}).get("opex") == opex_mode
+            ]
+        if seller:
+            candidates = [
+                x for x in candidates if signals_tmp.get(x.id, {}).get("seller") == seller
             ]
         if below_market:
             candidates = [
@@ -799,6 +880,7 @@ def dashboard(
         "district": district if district in KYIV_DISTRICTS else None,
         "activity": activity_filter or None,
         "stats_excluded": 1 if stats_excluded_filter else None,
+        "seller": seller or None,
         "opex": opex_mode or None,
         "below_market": below_market or None,
         "sort": sort if sort != "newest" else None,
@@ -815,6 +897,9 @@ def dashboard(
         {
             "activity_stats": activity_stats,
             "activity_filter": activity_filter or "",
+            "last_updated_at": last_updated_at,
+            "source_updated": source_updated,
+            "seller": seller or "",
             "watches": watches,
             "signals": signals,
             "listings": listings,
@@ -1070,11 +1155,37 @@ def _deal_card(db: Session, hyp: DealHypothesis) -> dict:
             .where(Listing.property_id == prop.id)
             .order_by(Listing.last_seen_at.desc())
         ).first()
+    sources: list[str] = []
+    explicit = False
+    if prop is not None:
+        siblings = list(
+            db.scalars(select(Listing).where(Listing.property_id == prop.id)).all()
+        )
+        sources = sorted({s.source for s in siblings if s.source})
+        for s in siblings:
+            raw = (s.source_status_raw or "").lower()
+            if any(x in raw for x in ("sold", "продано", "здано", "арендовано", "орендовано", "rented")):
+                explicit = True
+                break
+    feats = _hyp_features(hyp)
+    if not sources and isinstance(hyp.features, dict):
+        # fallback from score features text
+        pass
+    n_src = len(sources) or 1
+    if explicit:
+        source_label = "явный sold/rented"
+    elif n_src >= 2:
+        source_label = f"{n_src} источника"
+    else:
+        source_label = "1 источник"
     return {
         "hyp": hyp,
         "property": prop,
         "listing": listing,
-        "features": _hyp_features(hyp),
+        "features": feats,
+        "sources": sources,
+        "source_label": source_label,
+        "explicit_sold": explicit,
     }
 
 
@@ -1171,6 +1282,14 @@ def property_page(property_id: int, request: Request, db: Session = Depends(get_
         "sources": list({x.source for x in listings if x.source}),
         "spread_pct": None,
     }
+    from app.domain.property_match import describe_match_reasons
+
+    match_reasons = describe_match_reasons(list(listings))
+    price_history = [
+        e
+        for e in events
+        if e.event_type == "price_changed" and e.payload
+    ][:20]
     return templates.TemplateResponse(
         request,
         "property.html",
@@ -1181,5 +1300,7 @@ def property_page(property_id: int, request: Request, db: Session = Depends(get_
             "hyps": hyps,
             "signals": signals,
             "portal_compare": portal_compare,
+            "match_reasons": match_reasons,
+            "price_history": price_history,
         },
     )

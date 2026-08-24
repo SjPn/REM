@@ -447,6 +447,23 @@ def resolve_listing_opex(listing) -> str:
     )
 
 
+_OWNER_RE = re.compile(
+    r"("
+    r"від\s*власник|"
+    r"от\s*собственник|"
+    r"власник\b|"
+    r"собственник\b|"
+    r"без\s*коміс\w*\s*(?:від\s*)?власник|"
+    r"без\s*комисс\w*\s*(?:от\s*)?собственник|"
+    r"owner\s*direct|"
+    r"private\s*owner|"
+    r"без\s*посередник|"
+    r"без\s*посредник"
+    r")",
+    re.IGNORECASE,
+)
+
+
 def classify_seller(
     *,
     agency: str | None,
@@ -455,14 +472,26 @@ def classify_seller(
     description: str | None = None,
     phone_listing_count: int = 1,
 ) -> str:
-    """owner | agency | unknown — heuristic only."""
+    """owner | agency | unknown — heuristic only.
+
+    Best signals (strong → weak):
+    1) agency name / realtor keywords → agency
+    2) same phone on many listings → agency
+    3) explicit «від власника» + unique phone → owner
+    4) unique phone (1 listing), no agency markers → owner
+    """
     blob = " ".join(x for x in (agency, title, description) if x)
-    if agency and agency.strip():
+    owner_hint = bool(_OWNER_RE.search(blob or ""))
+    if agency and agency.strip() and not owner_hint:
         return "agency"
-    if _AGENCY_RE.search(blob or ""):
+    if _AGENCY_RE.search(blob or "") and not owner_hint:
         return "agency"
     if phone_listing_count >= 3:
         return "agency"
+    if owner_hint and phone_listing_count <= 2:
+        return "owner"
     if phone and phone_listing_count == 1 and not _AGENCY_RE.search(blob or ""):
+        return "owner"
+    if phone and phone_listing_count == 2 and owner_hint:
         return "owner"
     return "unknown"

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import DealHypothesis, Listing, Property, PropertyEvent, utcnow
 from app.domain.deal_score import DealScoreInput, score_deal
-from app.domain.enums import DealType, EventType, ListingStatus
+from app.domain.enums import DealBucket, DealType, EventType, ListingStatus
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ def reconcile_property_vanish(
         )
     )
     _refresh_property_active(db, property_id)
-    create_or_update_deal_hypothesis(db, rep)
+    create_or_update_deal_hypothesis(db, rep, allow_likely_deal=True)
     return True
 
 
@@ -215,7 +215,12 @@ def _relisted_soon(db: Session, listing: Listing, within_days: int = 14) -> bool
     return (relist or 0) > 0
 
 
-def create_or_update_deal_hypothesis(db: Session, listing: Listing) -> DealHypothesis | None:
+def create_or_update_deal_hypothesis(
+    db: Session,
+    listing: Listing,
+    *,
+    allow_likely_deal: bool = True,
+) -> DealHypothesis | None:
     if listing.status != ListingStatus.VANISHED.value or not listing.property_id:
         return None
 
@@ -238,6 +243,7 @@ def create_or_update_deal_hypothesis(db: Session, listing: Listing) -> DealHypot
         s.source for s in siblings if s.status == ListingStatus.VANISHED.value
     }
     tracked_sources = {s.source for s in siblings}
+    cross_source = len(tracked_sources) >= 2
 
     prev_price = None
     price_events = list(
@@ -273,10 +279,13 @@ def create_or_update_deal_hypothesis(db: Session, listing: Listing) -> DealHypot
         elif any(x in raw_status for x in ("здан", "арендован", "орендован", "rent")):
             listing.status = ListingStatus.RENTED_MARKED.value
 
+    vanished_at = listing.vanished_at or utcnow()
+    days_since = (utcnow() - vanished_at).total_seconds() / 86400.0
+
     result = score_deal(
         DealScoreInput(
             deal_type=DealType(listing.deal_type),
-            vanished_at=listing.vanished_at or utcnow(),
+            vanished_at=vanished_at,
             first_seen_at=listing.first_seen_at,
             last_price=listing.price,
             previous_price=prev_price,
@@ -287,18 +296,33 @@ def create_or_update_deal_hypothesis(db: Session, listing: Listing) -> DealHypot
             explicit_sold_or_rented=explicit,
             agency_bulk_delist=_agency_bulk_delist(db, listing),
             relisted_soon=_relisted_soon(db, listing),
+            days_since_vanish=days_since,
+            cross_source_confirmed=cross_source,
         )
     )
+
+    bucket = result.bucket.value
+    # Partial crawl / skip vanish: keep score but never promote to likely_deal.
+    if (
+        not allow_likely_deal
+        and bucket == DealBucket.LIKELY_DEAL.value
+        and not explicit
+    ):
+        bucket = DealBucket.AMBIGUOUS.value
 
     existing = db.scalar(
         select(DealHypothesis)
         .where(DealHypothesis.property_id == prop.id)
         .order_by(DealHypothesis.created_at.desc())
     )
+    features = result.to_dict()
+    features["bucket"] = bucket
+    if not allow_likely_deal and bucket != result.bucket.value:
+        features["capped_partial_crawl"] = True
     if existing and existing.human_label is None:
         existing.score = result.score
-        existing.bucket = result.bucket.value
-        existing.features = result.to_dict()
+        existing.bucket = bucket
+        existing.features = features
         existing.listing_id = listing.id
         hyp = existing
     else:
@@ -306,14 +330,18 @@ def create_or_update_deal_hypothesis(db: Session, listing: Listing) -> DealHypot
             property_id=prop.id,
             listing_id=listing.id,
             score=result.score,
-            bucket=result.bucket.value,
-            features=result.to_dict(),
+            bucket=bucket,
+            features=features,
         )
         db.add(hyp)
     return hyp
 
 
-def rescore_all_vanished(db: Session) -> int:
+def rescore_all_vanished(
+    db: Session,
+    *,
+    allow_likely_deal: bool = True,
+) -> int:
     property_ids = [
         pid
         for pid in db.scalars(
@@ -331,7 +359,9 @@ def rescore_all_vanished(db: Session) -> int:
         if _count_active_listings(db, int(pid)) > 0:
             continue
         rep = _pick_representative_listing(db, int(pid))
-        if rep and create_or_update_deal_hypothesis(db, rep):
+        if rep and create_or_update_deal_hypothesis(
+            db, rep, allow_likely_deal=allow_likely_deal
+        ):
             n += 1
     db.commit()
     return n

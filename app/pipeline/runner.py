@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 CrawlMode = str  # "watch" | "full"
 
 
-def _build_needs_detail(db: Session) -> Callable[[RawListing], bool]:
+def _build_needs_detail(db: Session, *, prefer_weak: bool = False) -> Callable[[RawListing], bool]:
     cache: dict[tuple[str, str], Listing | None] = {}
 
     def _lookup(raw: RawListing) -> Listing | None:
@@ -40,7 +40,18 @@ def _build_needs_detail(db: Session) -> Callable[[RawListing], bool]:
         return cache[key]
 
     def needs_detail(raw: RawListing) -> bool:
-        return needs_detail_fetch(_lookup(raw), raw)
+        from app.domain.property_match import is_weak_location
+
+        existing = _lookup(raw)
+        if prefer_weak:
+            # New cards and weak list identity get detail first (better dedupe).
+            if existing is None:
+                return True
+            if is_weak_location(raw.address_raw or existing.address_raw, raw.area_sqm or existing.area_sqm):
+                return True
+            if not (raw.phone or existing.phone):
+                return True
+        return needs_detail_fetch(existing, raw)
 
     return needs_detail
 
@@ -63,7 +74,7 @@ def run_crawl(
         details_cap = (
             max_details if max_details is not None else settings.watch_max_details
         )
-        needs_detail = _build_needs_detail(db)
+        needs_detail = _build_needs_detail(db, prefer_weak=True)
         logger.info(
             "watch crawl: pages=%s details=%s vanish=%s",
             pages,
@@ -74,7 +85,11 @@ def run_crawl(
         pages = max_pages if max_pages is not None else settings.scheduler_max_pages
         vanish = True if apply_vanish is None else apply_vanish
         details_cap = max_details
-        needs_detail = None
+        needs_detail = (
+            _build_needs_detail(db, prefer_weak=True)
+            if settings.enrich_details
+            else None
+        )
         logger.info("full crawl: pages=%s vanish=%s", pages, vanish)
 
     selected = list(sources or SCRAPERS.keys())
@@ -173,8 +188,18 @@ def run_crawl(
     if apply_vanish_after and sources_seen:
         summary["vanish_reconcile"] = apply_vanish_reconcile(db, sources_seen)
 
+    any_vanish_skipped = any(
+        bool((info or {}).get("vanish_skipped"))
+        for info in summary.get("sources", {}).values()
+        if isinstance(info, dict)
+    )
+    # Watch without vanish / skip vanish: aging OK, but no new likely_deal promotions.
+    allow_likely = not any_vanish_skipped and not (
+        mode == "watch" and not vanish
+    )
+
     cache_clear()
-    rescored = rescore_all_vanished(db)
+    rescored = rescore_all_vanished(db, allow_likely_deal=allow_likely)
     try:
         snap = record_market_snapshot(db, force=True)
         summary["market_snapshot_day"] = snap.day

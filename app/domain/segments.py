@@ -171,9 +171,10 @@ def classify_segment(
     if any(k in text for k in TARGET_KEYWORDS):
         return SegmentDecision(True, property_type or "other", "target_keyword")
 
-    # Kyiv commercial listing with only address title — keep as free_purpose
+    # Vague commercial listing with only address title — keep, but mark unclassified
+    # (free_purpose floods filters/stats when used as a catch-all).
     if title and len(title.strip()) >= 5:
-        return SegmentDecision(True, "free_purpose", "address_like_title")
+        return SegmentDecision(True, "other", "address_like_title")
 
     return SegmentDecision(False, "excluded", "no_target_signal")
 
