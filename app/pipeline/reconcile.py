@@ -135,8 +135,14 @@ def mark_vanished(
     seen_external_ids: set[str],
     *,
     grace_hours: int = 6,
+    zone: str | None = None,
 ) -> int:
-    """Mark missing listings vanished; property-level event only if gone from all sources."""
+    """Mark missing listings vanished; property-level event only if gone from all sources.
+
+    zone: for LUN, only touch listings in that geo scope (kyiv|region).
+    """
+    from app.pipeline.vanish_guard import listing_geo_scope
+
     now = utcnow()
     cutoff = now - timedelta(hours=grace_hours)
     q = select(Listing).where(
@@ -149,6 +155,8 @@ def mark_vanished(
     touched_properties: set[int] = set()
 
     for listing in db.scalars(q):
+        if zone and listing_geo_scope(listing) != zone:
+            continue
         if listing.external_id in seen_external_ids:
             continue
         listing.status = ListingStatus.VANISHED.value
@@ -175,8 +183,9 @@ def mark_vanished(
     db.commit()
     if listings_marked:
         logger.info(
-            "%s: marked %s listings vanished, %s properties emitted vanish events",
+            "%s%s: marked %s listings vanished, %s properties emitted vanish events",
             source,
+            f"/{zone}" if zone else "",
             listings_marked,
             properties_emitted,
         )

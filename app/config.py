@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Vanish only if crawl saw at least this share of active listings for the source.
     # 0.55 was too weak: 15 pages easily pass and mass-vanish the long tail.
     vanish_min_active_ratio: float = 0.85
+    # Coverage/vanish denominator: only listings with last_seen within this window.
+    # Older "ghost" actives are ignored so vanish is not permanently blocked.
+    coverage_lookback_days: int = 14
     # Daily watch (local time). Default: every day at 07:00
     crawl_schedule_cron: str = "0 7 * * *"
     # Weekly full crawl + vanish (only if coverage allows). Default: Sunday 03:00

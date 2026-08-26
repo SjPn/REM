@@ -45,11 +45,12 @@
   <section class="section">
     <div class="section-head">
       <h2>Покрытие сбора</h2>
-      <span class="muted">seen / active · vanish только при ≥ {{ '%.0f'|format(coverage.target_ratio * 100) }}%</span>
+      <span class="muted">seen / fresh ({{ coverage.lookback_days }}д) · порог ≥ {{ '%.0f'|format(coverage.target_ratio * 100) }}%</span>
     </div>
     <p class="page-lead" style="margin-top:0;">
       Watch ежедневно без vanish · полный прогон реже ·
-      <strong>detail-enrich ≠ coverage</strong> ленты.
+      знаменатель = <strong>fresh</strong> (last_seen за {{ coverage.lookback_days }}д), stale-ghosts не блокируют ·
+      LUN: отдельно kyiv / region ·
       API: <code>/api/coverage</code>
     </p>
     <div class="table-wrap">
@@ -57,11 +58,12 @@
         <thead>
           <tr>
             <th>Источник</th>
-            <th>Активных</th>
+            <th>Всего</th>
+            <th>Fresh</th>
+            <th>Stale</th>
             <th>Увидели</th>
-            <th>Coverage</th>
+            <th>vs fresh</th>
             <th>Vanish</th>
-            <th>Последний crawl</th>
             <th>Комментарий</th>
           </tr>
         </thead>
@@ -70,6 +72,8 @@
           <tr>
             <td><strong>{{ s.source }}</strong></td>
             <td class="num">{{ s.active }}</td>
+            <td class="num">{{ s.fresh_active }}</td>
+            <td class="num muted">{{ s.stale_active }}</td>
             <td class="num">{% if s.last_seen is not none %}{{ s.last_seen }}{% else %}—{% endif %}</td>
             <td class="num">
               {% if s.ratio is not none %}
@@ -77,15 +81,13 @@
               {% else %}—{% endif %}
             </td>
             <td>
-              {% if s.vanish_ok %}
+              {% if s.zone %}
+                <span class="muted">сегмент</span>
+              {% elif s.vanish_ok %}
                 <span class="tag below">можно</span>
               {% else %}
                 <span class="tag warn">рано</span>
               {% endif %}
-            </td>
-            <td class="muted">
-              {% if s.last_finished_at %}{{ s.last_finished_at[:16]|replace('T', ' ') }}{% else %}—{% endif %}
-              {% if s.last_pages %} · {{ s.last_pages }} стр.{% endif %}
             </td>
             <td class="muted" style="max-width:22rem;">{{ s.note }}</td>
           </tr>
@@ -110,7 +112,7 @@
             <th>Источник</th>
             <th>Статус</th>
             <th>Seen</th>
-            <th>Active</th>
+            <th>Fresh</th>
             <th>Ratio</th>
             <th>Vanish?</th>
           </tr>
@@ -122,7 +124,7 @@
             <td>{{ c.source }}</td>
             <td>{{ c.status }}</td>
             <td class="num">{{ c.listings_seen }}</td>
-            <td class="num">{{ c.active_now }}</td>
+            <td class="num">{{ c.fresh_active }}{% if c.stale_active %}<span class="muted">/+{{ c.stale_active }}</span>{% endif %}</td>
             <td class="num">{% if c.ratio is not none %}{{ '%.0f'|format(c.ratio * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if c.vanish_would_ok %}<span class="tag below">ok</span>{% else %}<span class="tag warn">skip</span>{% endif %}</td>
           </tr>

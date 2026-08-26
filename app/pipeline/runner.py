@@ -113,6 +113,7 @@ def run_crawl(
         "started_at": utcnow().isoformat(),
     }
     sources_seen: dict[str, set[str]] = {}
+    scoped_seen: dict[tuple[str, str], set[str]] = {}
 
     try:
         with HttpClient() as client:
@@ -137,6 +138,11 @@ def run_crawl(
                     ):
                         items.append(raw)
                         seen_ids.add(raw.external_id)
+                        zone = (raw.extra or {}).get("zone")
+                        if source == "lun" and zone in ("kyiv", "region"):
+                            scoped_seen.setdefault((source, str(zone)), set()).add(
+                                raw.external_id
+                            )
                     stats = ingest_many(db, items)
                     # Vanish must use upserted ids only — irrelevant cards inflate "seen"
                     # and let partial crawls mass-delete real inventory.
@@ -144,20 +150,78 @@ def run_crawl(
                     if not vanish_seen:
                         vanish_seen = seen_ids
                     sources_seen[source] = vanish_seen
+                    # Keep scoped sets only for upserted ids
+                    if source == "lun":
+                        for key in list(scoped_seen.keys()):
+                            if key[0] != source:
+                                continue
+                            scoped_seen[key] &= vanish_seen
                     vanished = 0
                     vanish_skipped = False
                     vanish_reason = ""
+                    vanish_detail: dict | None = None
                     do_vanish = vanish and vanish_seen and not apply_vanish_after
                     if do_vanish:
-                        ok, vanish_reason = vanish_allowed(db, source, len(vanish_seen))
-                        if ok:
-                            vanished = mark_vanished(db, source, vanish_seen)
-                            logger.info(
-                                "%s: vanished %s (%s)", source, vanished, vanish_reason
-                            )
+                        lun_zones = {
+                            z: ids
+                            for (src, z), ids in scoped_seen.items()
+                            if src == source and ids
+                        }
+                        if source == "lun" and lun_zones:
+                            from app.pipeline.reconcile import mark_vanished as _mv
+
+                            zone_results = {}
+                            any_ok = False
+                            for zone, ids in lun_zones.items():
+                                ok, reason = vanish_allowed(
+                                    db, source, len(ids), zone=zone
+                                )
+                                if ok:
+                                    n = _mv(db, source, ids, zone=zone)
+                                    vanished += n
+                                    any_ok = True
+                                    zone_results[zone] = {
+                                        "vanished": n,
+                                        "skipped": False,
+                                        "reason": reason,
+                                    }
+                                else:
+                                    zone_results[zone] = {
+                                        "vanished": 0,
+                                        "skipped": True,
+                                        "reason": reason,
+                                    }
+                            vanish_skipped = not any_ok
+                            vanish_reason = "per-zone"
+                            vanish_detail = zone_results
+                            if any_ok:
+                                logger.info(
+                                    "%s: vanished %s (per-zone %s)",
+                                    source,
+                                    vanished,
+                                    zone_results,
+                                )
+                            else:
+                                logger.warning(
+                                    "%s: skip vanish — per-zone %s", source, zone_results
+                                )
                         else:
-                            vanish_skipped = True
-                            logger.warning("%s: skip vanish — %s", source, vanish_reason)
+                            ok, vanish_reason = vanish_allowed(
+                                db, source, len(vanish_seen)
+                            )
+                            if ok:
+                                vanished = mark_vanished(db, source, vanish_seen)
+                                logger.info(
+                                    "%s: vanished %s (%s)",
+                                    source,
+                                    vanished,
+                                    vanish_reason,
+                                )
+                            else:
+                                vanish_skipped = True
+                                logger.warning(
+                                    "%s: skip vanish — %s", source, vanish_reason
+                                )
                     run.status = "ok"
                     run.listings_seen = len(vanish_seen)
                     run.pages_fetched = pages
@@ -168,6 +232,7 @@ def run_crawl(
                         "vanished": vanished,
                         "vanish_skipped": vanish_skipped,
                         "vanish_reason": vanish_reason or None,
+                        "vanish_zones": vanish_detail,
                         "with_price": sum(1 for x in items if x.price is not None),
                         "skipped_irrelevant": stats.get("skipped_irrelevant", 0),
                         "snapshots_skipped": stats.get("snapshots_skipped", 0),
@@ -186,7 +251,9 @@ def run_crawl(
 
     summary["sources_seen"] = {k: len(v) for k, v in sources_seen.items()}
     if apply_vanish_after and sources_seen:
-        summary["vanish_reconcile"] = apply_vanish_reconcile(db, sources_seen)
+        summary["vanish_reconcile"] = apply_vanish_reconcile(
+            db, sources_seen, scoped_seen=scoped_seen
+        )
 
     any_vanish_skipped = any(
         bool((info or {}).get("vanish_skipped"))
