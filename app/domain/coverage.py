@@ -14,7 +14,7 @@ from app.db.models import CrawlRun
 from app.pipeline.vanish_guard import (
     count_active_for_source,
     count_fresh_active,
-    count_stale_active,
+    count_source_zones,
     vanish_allowed,
 )
 from app.scrapers import SCRAPERS
@@ -63,13 +63,17 @@ def coverage_for_source(
     *,
     seen_override: int | None = None,
     zone: str | None = None,
+    active: int | None = None,
+    fresh: int | None = None,
 ) -> SourceCoverage:
     settings = get_settings()
     target = float(settings.vanish_min_active_ratio)
     lookback = int(settings.coverage_lookback_days)
-    active = count_active_for_source(db, source, zone=zone)
-    fresh = count_fresh_active(db, source, lookback_days=lookback, zone=zone)
-    stale = count_stale_active(db, source, lookback_days=lookback, zone=zone)
+    if active is None:
+        active = count_active_for_source(db, source, zone=zone)
+    if fresh is None:
+        fresh = count_fresh_active(db, source, lookback_days=lookback, zone=zone)
+    stale = max(0, int(active) - int(fresh))
     run = _last_crawl(db, source)
     seen = seen_override
     if seen is None and run is not None:
@@ -113,7 +117,9 @@ def coverage_for_source(
         gap = None
         note = f"Ещё не было сбора ({label})"
     else:
-        ok, reason = vanish_allowed(db, source, int(seen), zone=zone)
+        ok, reason = vanish_allowed(
+            db, source, int(seen), zone=zone, fresh=fresh, total=active
+        )
         ratio = (float(seen) / fresh) if fresh > 0 else None
         ratio_all = (float(seen) / active) if active > 0 else None
         if fresh > 0 and ratio is not None and ratio < target:
@@ -160,69 +166,118 @@ def coverage_report(
     db: Session,
     sources: list[str] | None = None,
 ) -> dict[str, Any]:
+    from app.domain.ttl_cache import cache_get
+
     settings = get_settings()
     srcs = sources or list(SCRAPERS.keys())
-    rows: list[SourceCoverage] = []
-    for s in srcs:
-        rows.append(coverage_for_source(db, s))
-        if s == "lun":
-            rows.append(coverage_for_source(db, s, zone="kyiv"))
-            rows.append(coverage_for_source(db, s, zone="region"))
-    # Ready = primary sources (not zone rows) that pass
-    primary = [r for r in rows if r.zone is None]
-    ready = sum(1 for r in primary if r.vanish_ok)
-    return {
-        "target_ratio": float(settings.vanish_min_active_ratio),
-        "min_seen_for_vanish": int(settings.min_seen_for_vanish),
-        "lookback_days": int(settings.coverage_lookback_days),
-        "sources_ready_for_vanish": ready,
-        "sources_total": len(primary),
-        "all_ready": ready == len(primary) and len(primary) > 0,
-        "ops": {
-            "watch": "ежедневно, без vanish (WATCH_APPLY_VANISH=false)",
-            "full": (
-                "реже, много страниц; vanish если seen/fresh >= "
-                f"{settings.vanish_min_active_ratio:.0%} "
-                f"(fresh = last_seen за {settings.coverage_lookback_days}д)"
-            ),
-            "details": "detail-enrich != coverage; stale ghosts ignored in ratio",
-            "lun": "coverage/vanish отдельно для lun:kyiv и lun:region",
-        },
-        "sources": [r.to_dict() for r in rows],
-    }
+    cache_key = "coverage_report:" + ",".join(srcs)
+
+    def _build() -> dict[str, Any]:
+        rows: list[SourceCoverage] = []
+        for s in srcs:
+            if s == "lun":
+                br = count_source_zones(db, s, lookback_days=settings.coverage_lookback_days)
+                rows.append(
+                    coverage_for_source(
+                        db,
+                        s,
+                        active=br["active"]["total"],
+                        fresh=br["fresh"]["total"],
+                    )
+                )
+                rows.append(
+                    coverage_for_source(
+                        db,
+                        s,
+                        zone="kyiv",
+                        active=br["active"].get("kyiv", 0),
+                        fresh=br["fresh"].get("kyiv", 0),
+                    )
+                )
+                rows.append(
+                    coverage_for_source(
+                        db,
+                        s,
+                        zone="region",
+                        active=br["active"].get("region", 0),
+                        fresh=br["fresh"].get("region", 0),
+                    )
+                )
+            else:
+                rows.append(coverage_for_source(db, s))
+        primary = [r for r in rows if r.zone is None]
+        ready = sum(1 for r in primary if r.vanish_ok)
+        return {
+            "target_ratio": float(settings.vanish_min_active_ratio),
+            "min_seen_for_vanish": int(settings.min_seen_for_vanish),
+            "lookback_days": int(settings.coverage_lookback_days),
+            "sources_ready_for_vanish": ready,
+            "sources_total": len(primary),
+            "all_ready": ready == len(primary) and len(primary) > 0,
+            "ops": {
+                "watch": "ежедневно, без vanish (WATCH_APPLY_VANISH=false)",
+                "full": (
+                    "реже, много страниц; vanish если seen/fresh >= "
+                    f"{settings.vanish_min_active_ratio:.0%} "
+                    f"(fresh = last_seen за {settings.coverage_lookback_days}д)"
+                ),
+                "details": "detail-enrich != coverage; stale ghosts ignored in ratio",
+                "lun": "coverage/vanish отдельно для lun:kyiv и lun:region",
+            },
+            "sources": [r.to_dict() for r in rows],
+        }
+
+    # Mode switch sale/rent must not re-scan inventory; coverage is mode-agnostic.
+    return cache_get(cache_key, 120.0, _build)
 
 
 def recent_crawls(db: Session, *, limit: int = 30) -> list[dict[str, Any]]:
-    rows = db.scalars(
-        select(CrawlRun).order_by(CrawlRun.started_at.desc()).limit(limit)
-    ).all()
-    out: list[dict[str, Any]] = []
-    lookback = int(get_settings().coverage_lookback_days)
-    for r in rows:
-        active = count_active_for_source(db, r.source)
-        fresh = count_fresh_active(db, r.source, lookback_days=lookback)
-        seen = int(r.listings_seen or 0)
-        ratio = (seen / fresh) if fresh > 0 else None
-        ok, reason = vanish_allowed(db, r.source, seen) if seen else (False, "seen=0")
-        out.append(
-            {
-                "id": r.id,
-                "source": r.source,
-                "status": r.status,
-                "started_at": r.started_at.isoformat() if r.started_at else None,
-                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-                "pages_fetched": r.pages_fetched,
-                "listings_seen": seen,
-                "active_now": active,
-                "fresh_active": fresh,
-                "stale_active": max(0, active - fresh),
-                "ratio": round(ratio, 4) if ratio is not None else None,
-                "vanish_would_ok": ok,
-                "vanish_reason": reason,
-                "error": r.error,
-            }
-        )
-    return out
+    from app.domain.ttl_cache import cache_get
+
+    def _build() -> list[dict[str, Any]]:
+        rows = db.scalars(
+            select(CrawlRun).order_by(CrawlRun.started_at.desc()).limit(limit)
+        ).all()
+        out: list[dict[str, Any]] = []
+        lookback = int(get_settings().coverage_lookback_days)
+        # One inventory pass per source (was N× full table scans).
+        inv_by_source: dict[str, tuple[int, int]] = {}
+        for r in rows:
+            src = r.source
+            if src not in inv_by_source:
+                active = count_active_for_source(db, src)
+                fresh = count_fresh_active(db, src, lookback_days=lookback)
+                inv_by_source[src] = (active, fresh)
+            active, fresh = inv_by_source[src]
+            seen = int(r.listings_seen or 0)
+            ratio = (seen / fresh) if fresh > 0 else None
+            if seen:
+                ok, reason = vanish_allowed(
+                    db, src, seen, fresh=fresh, total=active
+                )
+            else:
+                ok, reason = False, "seen=0"
+            out.append(
+                {
+                    "id": r.id,
+                    "source": src,
+                    "status": r.status,
+                    "started_at": r.started_at.isoformat() if r.started_at else None,
+                    "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                    "pages_fetched": r.pages_fetched,
+                    "listings_seen": seen,
+                    "active_now": active,
+                    "fresh_active": fresh,
+                    "stale_active": max(0, active - fresh),
+                    "ratio": round(ratio, 4) if ratio is not None else None,
+                    "vanish_would_ok": ok,
+                    "vanish_reason": reason,
+                    "error": r.error,
+                }
+            )
+        return out
+
+    return cache_get(f"recent_crawls:{limit}", 120.0, _build)
 
 
 def backfill_pages_for_source(source: str, override: int | None = None) -> int:

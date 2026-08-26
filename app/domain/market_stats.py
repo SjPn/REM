@@ -262,12 +262,33 @@ def compute_all_market_stats(db: Session) -> dict[str, MarketSlice]:
         rent_unknown_city: list[float] = []
         rent_unknown_by = {d: [] for d in KYIV_DISTRICTS}
 
-        q = select(Listing).where(
-            Listing.status.in_(["active", "relisted"]),
-            Listing.price.is_not(None),
-            Listing.area_sqm.is_not(None),
-            Listing.area_sqm > 0,
-            Listing.deal_type.in_(["sale", "rent"]),
+        from sqlalchemy.orm import load_only
+
+        q = (
+            select(Listing)
+            .where(
+                Listing.status.in_(["active", "relisted"]),
+                Listing.price.is_not(None),
+                Listing.area_sqm.is_not(None),
+                Listing.area_sqm > 0,
+                Listing.deal_type.in_(["sale", "rent"]),
+            )
+            .options(
+                load_only(
+                    Listing.id,
+                    Listing.deal_type,
+                    Listing.price,
+                    Listing.currency,
+                    Listing.area_sqm,
+                    Listing.district,
+                    Listing.address_raw,
+                    Listing.title,
+                    Listing.description,
+                    Listing.city,
+                    Listing.raw_extra,
+                    Listing.exclude_from_stats,
+                )
+            )
         )
         for lst in db.scalars(q):
             if is_excluded_from_stats(lst):
@@ -331,7 +352,8 @@ def compute_all_market_stats(db: Session) -> dict[str, MarketSlice]:
             ),
         }
 
-    return cache_get("market_stats_all", 60.0, _build)
+    # Shared by sale/rent UI toggle — keep warm across mode switches.
+    return cache_get("market_stats_all", 180.0, _build)
 
 
 def pick_rent_market_slice(market: dict, opex: str | None = None) -> MarketSlice:
@@ -361,18 +383,24 @@ def count_active_inventory(db: Session) -> dict:
         sale_no_district = 0
         rent_no_district = 0
 
-        q = select(Listing).where(Listing.status.in_(["active", "relisted"]))
-        for lst in db.scalars(q):
-            district = normalize_district(lst.district) or extract_district(
-                lst.address_raw, lst.title, lst.city
+        q = select(
+            Listing.deal_type,
+            Listing.district,
+            Listing.address_raw,
+            Listing.title,
+            Listing.city,
+        ).where(Listing.status.in_(["active", "relisted"]))
+        for deal_type, district_raw, address_raw, title, city in db.execute(q):
+            district = normalize_district(district_raw) or extract_district(
+                address_raw, title, city
             )
-            if lst.deal_type == "sale":
+            if deal_type == "sale":
                 sale_total += 1
                 if district in sale_by:
                     sale_by[district] += 1
                 else:
                     sale_no_district += 1
-            elif lst.deal_type == "rent":
+            elif deal_type == "rent":
                 rent_total += 1
                 if district in rent_by:
                     rent_by[district] += 1
@@ -393,7 +421,7 @@ def count_active_inventory(db: Session) -> dict:
             "districts": districts,
         }
 
-    return cache_get("inventory_active", 60.0, _build)
+    return cache_get("inventory_active", 180.0, _build)
 
 
 def rough_yield_by_district(market: dict) -> dict:
