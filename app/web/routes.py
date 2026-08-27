@@ -732,7 +732,7 @@ def dashboard(
     q: str | None = None,
     period: str | None = None,
     district: str | None = None,
-    activity: str | None = Query(None, pattern="^(vanished|price_drop|sold)$"),
+    activity: str | None = Query(None, pattern="^(new|vanished|price_drop|sold)$"),
     stats_excluded: int = Query(0, ge=0, le=1),
     seller: str | None = Query(None, pattern="^(owner|agency|unknown)$"),
     opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
@@ -796,7 +796,19 @@ def dashboard(
 
     activity_since = datetime.now(timezone.utc) - timedelta(hours=24)
     activity_ids: list[int] | None = None
-    if activity_filter == "vanished":
+    if activity_filter == "new":
+        new_properties = select(Property.id).where(
+            Property.first_seen_at >= activity_since,
+            Property.is_active.is_(True),
+            Property.deal_type == deal_type,
+        )
+        filters = [
+            Listing.deal_type == deal_type,
+            Listing.status.in_(["active", "relisted"]),
+            Listing.price.is_not(None),
+            Listing.property_id.in_(new_properties),
+        ]
+    elif activity_filter == "vanished":
         activity_ids = listing_ids_for_vanished(
             db, since=activity_since, deal_type=deal_type
         )
@@ -805,7 +817,9 @@ def dashboard(
             db, since=activity_since, deal_type=deal_type
         )
 
-    if activity_filter == "vanished":
+    if activity_filter == "new":
+        pass
+    elif activity_filter == "vanished":
         filters = [
             Listing.deal_type == deal_type,
             Listing.status == "vanished",
@@ -902,6 +916,7 @@ def dashboard(
         below_market
         or opex_mode
         or seller
+        or activity_filter == "new"
         or price_min is not None
         or price_max is not None
         or activity_ids is not None
@@ -915,6 +930,17 @@ def dashboard(
                 select(Listing).where(*filters).order_by(order).limit(2500)
             ).all()
         )
+        if activity_filter == "new":
+            # One representative listing per newly observed property.
+            unique_candidates = []
+            seen_properties: set[int] = set()
+            for candidate in candidates:
+                property_id = candidate.property_id or -candidate.id
+                if property_id in seen_properties:
+                    continue
+                seen_properties.add(property_id)
+                unique_candidates.append(candidate)
+            candidates = unique_candidates
         candidates = _apply_range_filters(
             candidates,
             price_min=price_min,

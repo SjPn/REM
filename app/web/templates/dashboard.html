@@ -34,7 +34,13 @@
   <section class="overview" aria-label="Сводка">
     <a class="ov-card is-accent" href="/?deal_type={{ deal_type }}&period=24h">
       <div class="ov-n">{{ activity_stats.new_listings }}</div>
-      <div class="ov-l">Новые за сутки</div>
+      <div class="ov-l">Новые объявления</div>
+    </a>
+    <a class="ov-card is-accent {% if activity_filter == 'new' %}is-on{% endif %}"
+       href="/?deal_type={{ deal_type }}&activity=new"
+       title="Уникальные объекты, впервые замеченные системой за последние 24 часа и ещё активные">
+      <div class="ov-n">{{ activity_stats.new_objects }}</div>
+      <div class="ov-l">Новые объекты</div>
     </a>
     <a class="ov-card is-accent {% if activity_filter == 'vanished' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=vanished" title="Исчезли с площадок за сутки — объект не активен ни на одном источнике">
       <div class="ov-n">{{ activity_stats.vanished }}</div>

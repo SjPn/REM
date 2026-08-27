@@ -53,6 +53,38 @@ def _count_listing_events(
     return db.scalar(q) or 0
 
 
+def _count_new_objects(
+    db: Session,
+    since: datetime,
+    *,
+    deal_type: str | None = None,
+) -> int:
+    """Count distinct properties first observed in the window and still active."""
+    active_listing = (
+        select(Listing.id)
+        .where(
+            Listing.property_id == Property.id,
+            Listing.status.in_(
+                [ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value]
+            ),
+        )
+        .limit(1)
+        .correlate(Property)
+    )
+    q = (
+        select(func.count())
+        .select_from(Property)
+        .where(
+            Property.first_seen_at >= since,
+            Property.is_active.is_(True),
+            active_listing.exists(),
+        )
+    )
+    if deal_type:
+        q = q.where(Property.deal_type == deal_type)
+    return int(db.scalar(q) or 0)
+
+
 def _price_drop_events(db: Session, since: datetime, *, deal_type: str | None = None) -> int:
     return len(listing_ids_for_price_drops(db, since=since, deal_type=deal_type))
 
@@ -258,6 +290,7 @@ def activity_summary(
             "new_listings": _count_listing_events(
                 db, EventType.APPEARED.value, since, deal_type=deal_type
             ),
+            "new_objects": _count_new_objects(db, since, deal_type=deal_type),
             "vanished": _count_property_vanished_events(
                 db, since, deal_type=deal_type
             ),

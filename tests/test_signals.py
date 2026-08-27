@@ -102,6 +102,75 @@ def test_count_active_inventory_shape():
         db.close()
 
 
+def test_activity_counts_unique_new_objects_not_source_listings(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    db_path = tmp_path / "new_objects.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    from app.config import get_settings
+    from app.db import models as db_models
+    from app.db.models import Listing, Property, get_session_factory, init_db
+    from app.domain.signals import activity_summary
+    from app.domain.ttl_cache import cache_clear
+
+    get_settings.cache_clear()
+    cache_clear()
+    db_models._engine = None
+    db_models._SessionLocal = None
+    init_db()
+    now = datetime.now(timezone.utc)
+    with get_session_factory()() as db:
+        prop = Property(
+            fingerprint="new-object",
+            deal_type="sale",
+            first_seen_at=now,
+            last_seen_at=now,
+            is_active=True,
+        )
+        old_prop = Property(
+            fingerprint="old-object",
+            deal_type="sale",
+            first_seen_at=now - timedelta(days=2),
+            last_seen_at=now,
+            is_active=True,
+        )
+        db.add_all([prop, old_prop])
+        db.flush()
+        db.add_all(
+            [
+                Listing(
+                    property_id=prop.id,
+                    source="lun",
+                    external_id="new-lun",
+                    url="https://example.test/new-lun",
+                    deal_type="sale",
+                    status="active",
+                ),
+                Listing(
+                    property_id=prop.id,
+                    source="rieltor",
+                    external_id="new-rieltor",
+                    url="https://example.test/new-rieltor",
+                    deal_type="sale",
+                    status="active",
+                ),
+                Listing(
+                    property_id=old_prop.id,
+                    source="lun",
+                    external_id="old-lun",
+                    url="https://example.test/old-lun",
+                    deal_type="sale",
+                    status="active",
+                ),
+            ]
+        )
+        db.commit()
+
+        stats = activity_summary(db, hours=24, deal_type="sale")
+
+    assert stats["new_objects"] == 1
+
+
 def test_portal_blocked_error():
     err = PortalBlockedError(429, "https://example.com")
     assert err.status_code == 429
