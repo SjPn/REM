@@ -23,12 +23,41 @@ _STREET_RE = re.compile(
     r"туп\.|набереж|шосе|дорога|\d)",
     re.IGNORECASE,
 )
+_BUILDING_NUM_RE = re.compile(
+    r"(?:"
+    r"№\s*\d+"
+    r"|(?:буд|будинок|дом|корп(?:ус)?|корп\.|секц(?:ія)?)\s*\.?\s*\d+"
+    r"|(?:офіс|офис|приміщення|помещение|квартира|кв\.?|кім\.?|room)\s*\.?\s*\d+"
+    r"|(?:вул|улиц|просп|пр-т|б-р|бульвар|провул|пер\.|площа|пл\.|набереж|шосе)"
+    r"[^,\d]{2,60},\s*\d{1,4}[а-яіїєґa-z]?"
+    r"|(?:вул|улиц|просп|пр-т|б-р|бульвар|провул|пер\.|площа|пл\.|набереж|шосе)"
+    r"\s+[\w'’\-]{2,40}\s+\d{1,4}[а-яіїєґa-z]?"
+    r")",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
 class MatchResult:
     property: Property
     reason: str  # fingerprint | soft_address | phone | weak_unique
+
+
+def has_building_number(address: str | None) -> bool:
+    """True when address has a house/office/unit number — required for soft-match."""
+    if not address:
+        return False
+    text = address.strip()
+    if _BUILDING_NUM_RE.search(text):
+        return True
+    if re.search(r",\s*\d{1,4}[а-яіїєґa-z]?(?:\s|$)", text, re.IGNORECASE):
+        return True
+    norm = normalize_address(text)
+    tokens = norm.split()
+    for tok in tokens:
+        if re.fullmatch(r"\d{1,4}[а-яіїєґa-z]?", tok):
+            return True
+    return False
 
 
 def is_weak_location(address: str | None, area_sqm: float | None) -> bool:
@@ -52,6 +81,8 @@ def soft_identity_key(
 ) -> tuple[str, float | None, int | None, str] | None:
     if is_weak_location(address, area_sqm):
         return None
+    if not has_building_number(address):
+        return None
     addr = normalize_address(address)
     area = round_area(area_sqm)
     return (addr, area, floor, (deal_type or "").lower())
@@ -67,6 +98,28 @@ def _usd_close(a: float | None, cur_a: str | None, b: float | None, cur_b: str |
         return None
     lo, hi = (ua, ub) if ua <= ub else (ub, ua)
     return hi <= lo * 1.20  # ±~18% soft signal, not a hard key
+
+
+def _same_source_sibling_exists(
+    db: Session,
+    property_id: int,
+    *,
+    source: str | None,
+    external_id: str | None,
+) -> bool:
+    """Block merge when the property already has another card from the same portal."""
+    if not source or not external_id:
+        return False
+    hit = db.scalar(
+        select(Listing.id)
+        .where(
+            Listing.property_id == property_id,
+            Listing.source == source,
+            Listing.external_id != external_id,
+        )
+        .limit(1)
+    )
+    return hit is not None
 
 
 def find_property_match(
@@ -101,6 +154,10 @@ def find_property_match(
         candidates = list(db.scalars(q.limit(40)).all())
         area_f = float(area) if area is not None else None
         for c in candidates:
+            if _same_source_sibling_exists(
+                db, int(c.id), source=source, external_id=external_id
+            ):
+                continue
             if c.area_sqm is None or area_f is None:
                 continue
             if abs(float(c.area_sqm) - area_f) > 2.0:
@@ -137,7 +194,9 @@ def find_property_match(
         )
         if lid is not None:
             prop = db.get(Property, int(lid))
-            if prop is not None:
+            if prop is not None and not _same_source_sibling_exists(
+                db, int(prop.id), source=source, external_id=external_id
+            ):
                 return MatchResult(prop, "phone")
 
     return None
@@ -179,6 +238,103 @@ def describe_match_reasons(listings: list[Listing]) -> list[str]:
     if len(prices) >= 2 and max(prices) <= min(prices) * 1.2:
         reasons.append("близкая цена")
     return reasons or ["общий fingerprint"]
+
+
+def split_listing_to_own_property(db: Session, listing: Listing) -> Property:
+    """Undo a bad soft-merge: one listing card → its own Property."""
+    # Always isolate by portal card id — never re-collapse during repair.
+    fingerprint = weak_unique_fingerprint(
+        listing.source, listing.external_id, listing.deal_type
+    )
+
+    prop = db.scalar(select(Property).where(Property.fingerprint == fingerprint))
+    if prop is None:
+        prop = Property(
+            fingerprint=fingerprint,
+            title=listing.title,
+            address_norm=normalize_address(listing.address_raw),
+            district=listing.district,
+            city=listing.city,
+            property_type=listing.property_type,
+            deal_type=listing.deal_type,
+            area_sqm=listing.area_sqm,
+            floor=listing.floor,
+            lat=listing.lat,
+            lon=listing.lon,
+            first_seen_at=listing.first_seen_at,
+            last_seen_at=listing.last_seen_at,
+            is_active=listing.status in ("active", "relisted"),
+        )
+        db.add(prop)
+        db.flush()
+    else:
+        prop.is_active = True
+        prop.last_seen_at = listing.last_seen_at
+
+    listing.property_id = prop.id
+    extra = dict(listing.raw_extra or {})
+    extra["match_reason"] = "repair_split"
+    listing.raw_extra = extra or None
+    return prop
+
+
+def repair_overmerged_properties(db: Session, *, dry_run: bool = True) -> dict:
+    """Split active listings wrongly glued to one Property on the same source."""
+    active = ("active", "relisted")
+    groups_q = (
+        select(Listing.property_id, Listing.source, func.count())
+        .where(Listing.property_id.is_not(None), Listing.status.in_(active))
+        .group_by(Listing.property_id, Listing.source)
+        .having(func.count() > 1)
+    )
+    groups = 0
+    split_listings = 0
+    touched_properties: set[int] = set()
+
+    for property_id, source, _count in db.execute(groups_q):
+        groups += 1
+        touched_properties.add(int(property_id))
+        listings = list(
+            db.scalars(
+                select(Listing)
+                .where(
+                    Listing.property_id == property_id,
+                    Listing.source == source,
+                    Listing.status.in_(active),
+                )
+                .order_by(Listing.first_seen_at.asc(), Listing.id.asc())
+            ).all()
+        )
+        for lst in listings[1:]:
+            split_listings += 1
+            if not dry_run:
+                split_listing_to_own_property(db, lst)
+
+    if not dry_run:
+        for pid in touched_properties:
+            prop = db.get(Property, pid)
+            if prop is None:
+                continue
+            active_n = (
+                db.scalar(
+                    select(func.count())
+                    .select_from(Listing)
+                    .where(
+                        Listing.property_id == pid,
+                        Listing.status.in_(active),
+                    )
+                )
+                or 0
+            )
+            prop.is_active = active_n > 0
+        db.commit()
+
+    return {
+        "groups": groups,
+        "split_listings": split_listings,
+        "properties_touched": len(touched_properties),
+        "dry_run": dry_run,
+    }
 
 
 def merge_properties(db: Session, keep_id: int, drop_id: int) -> int:

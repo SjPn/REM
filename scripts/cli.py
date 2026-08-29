@@ -911,6 +911,22 @@ def merge_orphans_cmd(dry_run: bool = typer.Option(True, help="Только по
     rprint({"groups": groups, "merged": merged, "dry_run": dry_run})
 
 
+@app.command("repair-overmerged")
+def repair_overmerged_cmd(
+    apply: bool = typer.Option(False, "--apply", help="Записать разрезание в БД"),
+) -> None:
+    """Разрезать объекты, куда ошибочно склеилось несколько карточек одного источника."""
+    from app.domain.property_match import repair_overmerged_properties
+    from app.domain.ttl_cache import cache_clear
+
+    init_db()
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        summary = repair_overmerged_properties(db, dry_run=not apply)
+    cache_clear()
+    rprint(summary)
+
+
 @app.command("fix-mojibake")
 def fix_mojibake_cmd(
     source: Optional[str] = typer.Option("olx", help="Источник (по умолчанию olx)"),
