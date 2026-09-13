@@ -372,6 +372,51 @@ def rescore() -> None:
     rprint({"rescored": n})
 
 
+@app.command("ensure-ready")
+def ensure_ready_cmd(
+    sources: Optional[str] = typer.Option(
+        None, help="Comma list; default all scrapers"
+    ),
+    page_ceiling: Optional[int] = typer.Option(
+        None, help="Max pages per source (default BACKFILL_COVERAGE_MAX_PAGES)"
+    ),
+    skip_reconcile: bool = typer.Option(
+        False, help="Только coverage, без vanish"
+    ),
+    skip_rescore: bool = typer.Option(False, help="Не вызывать rescore"),
+    no_refresh_stale: bool = typer.Option(
+        False,
+        help="Не обновлять площадки, у которых vanish_ok из‑за пустого fresh",
+    ),
+) -> None:
+    """Агент готовности портала: 5/5 coverage → reconcile-vanish → rescore.
+
+    Следит за наполнением, поднимает pages до порога, чинит сбои retry,
+    обновляет устаревшие «ok» без fresh, затем vanish и пересчёт сделок.
+    """
+    import json
+
+    from app.pipeline.ensure_ready import ensure_portal_ready
+
+    init_db()
+    src_list = (
+        [s.strip() for s in sources.split(",") if s.strip()] if sources else None
+    )
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        report = ensure_portal_ready(
+            db,
+            sources=src_list,
+            page_ceiling=page_ceiling,
+            skip_reconcile=skip_reconcile,
+            skip_rescore=skip_rescore,
+            refresh_stale_ok=not no_refresh_stale,
+        )
+    print(json.dumps(report, ensure_ascii=True, indent=2, default=str))
+    if not report.get("ok"):
+        raise typer.Exit(code=1)
+
+
 @app.command("clean-junk")
 def clean_junk() -> None:
     """Remove non-Kyiv URLs and nonsensical prices (inf / absurd)."""

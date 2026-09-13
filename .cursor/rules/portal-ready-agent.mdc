@@ -1,0 +1,34 @@
+---
+description: Агент готовности портала — coverage 5/5, vanish, rescore
+alwaysApply: false
+globs: app/pipeline/ensure_ready.py,scripts/cli.py,app/domain/coverage.py,app/pipeline/vanish_guard.py
+---
+
+# Агент «готовый портал»
+
+Цель: **5/5 площадок готовы искать сделки**, затем `reconcile-vanish` + `rescore`, чтобы `/deals` жил.
+
+## Запуск
+
+```bash
+python -m scripts.cli ensure-ready
+python -m scripts.cli coverage
+```
+
+Не гонять параллельно второй тяжёлый crawl по тем же источникам.
+
+## Алгоритм
+
+1. Снять snapshot coverage (primary, без `lun:zone`).
+2. Для `vanish_ok=false` — backfill с ростом pages до `BACKFILL_COVERAGE_MAX_PAGES`, retry на ошибки HTTP.
+3. Для `vanish_ok` только из‑за `fresh=0` / старый crawl — **refresh** полным прогоном (иначе vanish вычистит призраков).
+4. Когда здоровые источники готовы — `run_crawl(..., apply_vanish_after=True)` по ним.
+5. `rescore_all_vanished(allow_likely_deal=True)`.
+6. Проверить buckets `deal_hypotheses` и UI `/stats`, `/deals?bucket=ambiguous&hours=0`.
+
+## Если не доходит до 5/5
+
+- Смотреть `stuck` / `vanish_reason` в отчёте `ensure-ready`.
+- LUN: зоны kyiv/region; много stale не блокирует, но `seen < 100` — мало страниц.
+- Не снижать `MIN_SEEN` / ratio без явной причины и теста.
+- После фикса — снова `ensure-ready`, не ручной частичный watch.
