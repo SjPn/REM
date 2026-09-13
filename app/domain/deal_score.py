@@ -93,15 +93,16 @@ def score_deal(inp: DealScoreInput) -> DealScoreResult:
         )
         score += 25
     else:
-        # Single-source vanish is weak evidence of a real deal.
+        # Single-source alone is not enough for likely_deal, but with explicit
+        # sold/rented + typical DOM + still-gone it can clear DEAL_LIKELY_MIN.
         features.append(
             ScoreFeature(
                 "vanished_single_source",
-                6,
-                "Исчезло с одного источника (слабый сигнал)",
+                23,
+                "Исчезло с одного источника",
             )
         )
-        score += 6
+        score += 23
 
     if inp.price_drop_count > 0 or (
         inp.last_price is not None

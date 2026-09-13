@@ -318,23 +318,34 @@ def create_or_update_deal_hypothesis(
         )
     )
 
-    bucket = result.bucket.value
-    # Partial crawl / skip vanish: keep score but never promote to likely_deal.
-    if (
-        not allow_likely_deal
-        and bucket == DealBucket.LIKELY_DEAL.value
-        and not explicit
-    ):
-        bucket = DealBucket.AMBIGUOUS.value
-
     existing = db.scalar(
         select(DealHypothesis)
         .where(DealHypothesis.property_id == prop.id)
         .order_by(DealHypothesis.created_at.desc())
     )
+
+    bucket = result.bucket.value
+    # Partial crawl / watch: do not promote *new* likely_deal, but never demote
+    # an already-confirmed likely_deal (daily watch would empty /deals).
+    capped = False
+    if (
+        not allow_likely_deal
+        and bucket == DealBucket.LIKELY_DEAL.value
+        and not explicit
+    ):
+        already_likely = (
+            existing is not None
+            and existing.bucket == DealBucket.LIKELY_DEAL.value
+        )
+        if already_likely:
+            bucket = DealBucket.LIKELY_DEAL.value
+        else:
+            bucket = DealBucket.AMBIGUOUS.value
+            capped = True
+
     features = result.to_dict()
     features["bucket"] = bucket
-    if not allow_likely_deal and bucket != result.bucket.value:
+    if capped:
         features["capped_partial_crawl"] = True
     if existing and existing.human_label is None:
         existing.score = result.score

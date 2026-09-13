@@ -1,0 +1,17 @@
+---
+description: Чеклист аудита сделок / vanish / coverage
+globs: app/pipeline/**,app/domain/deal_score.py,app/domain/coverage.py,app/web/templates/stats.html,app/web/templates/deals.html,app/web/templates/deal.html
+alwaysApply: false
+---
+
+# Аудит сделок и vanish
+
+Перед правкой или закрытием бага «нет сделок»:
+
+1. **Coverage:** `vanish_ok`? `seen ≥ MIN_SEEN_FOR_VANISH`, `seen/fresh ≥ VANISH_MIN_ACTIVE_RATIO`. LUN — зоны kyiv/region отдельно.
+2. **Watch:** ежедневный watch по умолчанию **без** vanish (`WATCH_APPLY_VANISH=false`).
+3. **Cap:** `allow_likely_deal=False` не должен **сбрасывать** уже существующий `likely_deal` (только блокировать новые повышения). Искать `capped_partial_crawl`.
+4. **Score:** single-source слабее multi; порог `DEAL_LIKELY_MIN`. Проверить вкладку **Неясно** и период **Всё время**, не только `likely_deal` за 7 дней.
+5. **Проверки:** `python -m scripts.cli coverage`; SQL `deal_hypotheses` GROUP BY bucket; listings `status`; логи `skip vanish`.
+
+Сделка в UI = `DealHypothesis`, не сырой `vanished` listing.

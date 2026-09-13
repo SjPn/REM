@@ -8,6 +8,7 @@
       <h1 class="page-title">Сделки</h1>
       <p class="page-lead">
         Объявление исчезло с площадки → REM оценивает: сделка или просто сняли.
+        Цель раздела — <strong>проданные и сданные</strong> помещения.
         <strong>Не участвует в медиане активных.</strong> Это оценка, не факт продажи.
       </p>
     </div>
@@ -36,7 +37,38 @@
   </nav>
 
   {% if not cards %}
-    <p class="empty">Пока пусто. Появятся после ежедневного сбора, когда объявления начнут исчезать.</p>
+    <div class="empty empty-rich">
+      <p>
+        {% if bucket == 'likely_deal' %}
+          Похожих на сделку за выбранный период нет.
+        {% elif bucket == 'ambiguous' %}
+          Неясных гипотез за выбранный период нет.
+        {% elif bucket == 'likely_withdrawn' %}
+          «Скорее сняли» за выбранный период нет.
+        {% else %}
+          Гипотез сделок за выбранный период нет.
+        {% endif %}
+      </p>
+      {% if coverage %}
+      <p>
+        Готовы искать сделки:
+        <strong>{{ coverage.sources_ready_for_vanish }}</strong>
+        из {{ coverage.sources_total }} площадок.
+        {% if not coverage.all_ready %}
+          Пока сбор неполный — пропавшие объявления часто не отмечаем, чтобы не ошибиться.
+        {% endif %}
+        Подробнее на
+        <a href="/stats?mode={{ deal_type }}">Статистике</a>.
+      </p>
+      {% endif %}
+      <p class="muted">
+        Смотрите также вкладку
+        <a href="/deals?bucket=ambiguous&deal_type={{ deal_type }}&hours={{ hours }}">Неясно</a>
+        и период
+        <a href="/deals?bucket={{ bucket or 'likely_deal' }}&deal_type={{ deal_type }}&hours=0">Всё время</a>
+        — часть оценок может быть там.
+      </p>
+    </div>
   {% else %}
     <div class="deal-list">
       {% for c in cards %}
@@ -81,8 +113,8 @@
             </ul>
             <div class="listing-links row">
               <a href="/deals/{{ h.id }}">почему так →</a>
-              {% if lst and lst.url %}
-                <a href="{{ lst.url }}" target="_blank" rel="noopener noreferrer">сайт ↗</a>
+              {% if lst %}
+                <a href="{{ listing_portal_url(lst) }}" target="_blank" rel="noopener noreferrer">сайт ↗</a>
               {% endif %}
               {% if prop %}
                 <a href="/properties/{{ prop.id }}">в REM</a>

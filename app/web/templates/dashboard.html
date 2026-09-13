@@ -15,7 +15,7 @@
         {% endif %}
         · медиана {{ fmt_psm(market_slice.city_median_psm, deal_type) }}
         {% if deal_type == 'rent' and rent_slice_label %} · {{ rent_slice_label }}{% endif %}
-        <span class="muted"> · только активные в сети</span>
+        <span class="muted"> · новые, уценённые и исчезнувшие — ниже</span>
         {% if last_updated_at %}
           <span class="muted"> · обновлено {{ last_updated_at.strftime('%d.%m.%Y %H:%M') }}</span>
         {% endif %}

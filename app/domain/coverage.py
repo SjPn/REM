@@ -104,8 +104,8 @@ def coverage_for_source(
             lookback_days=lookback,
             gap_to_target=None,
             note=(
-                f"Сегмент LUN ({zone}): fresh={fresh}, stale={stale}. "
-                "Vanish считается отдельно по зоне во время crawl."
+                f"Разрез LUN ({zone}): свежих {fresh}, устаревших {stale}. "
+                "Готовность к поиску сделок считается по зоне при полном сборе."
             ),
             zone=zone,
         )
@@ -115,7 +115,7 @@ def coverage_for_source(
         ratio = None
         ratio_all = None
         gap = None
-        note = f"Ещё не было сбора ({label})"
+        note = f"Ещё не было успешного сбора с площадки «{label}»"
     else:
         ok, reason = vanish_allowed(
             db, source, int(seen), zone=zone, fresh=fresh, total=active
@@ -128,14 +128,20 @@ def coverage_for_source(
             gap = 0
         if ok:
             note = (
-                f"Coverage достаточный для vanish "
-                f"(fresh={fresh}, stale_ignored={stale})"
+                f"Сбор достаточно полный: можно отмечать пропавшие "
+                f"(свежих {fresh}, устаревших в стороне {stale})"
             )
         elif ratio is not None and ratio < target:
             note = (
-                f"Мало покрытия fresh: увидели {seen} из {fresh} "
-                f"за {lookback}д ({ratio:.0%}, нужно >={target:.0%}). "
-                f"Stale {stale} не в знаменателе. Detail-enrich это не чинит."
+                f"Собрали мало свежих объявлений: {seen} из {fresh} "
+                f"за {lookback} дн. ({ratio:.0%}, нужно ≥{target:.0%}). "
+                f"Пока не помечаем пропавшие, чтобы не ошибиться. "
+                f"Устаревшие ({stale}) в расчёт не входят."
+            )
+        elif "min=" in reason or "seen=" in reason:
+            note = (
+                f"За последний проход увидели мало объявлений ({reason}). "
+                "Полный сбор ещё не готов — пропавшие не отмечаем."
             )
         else:
             note = reason

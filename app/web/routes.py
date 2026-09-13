@@ -1368,6 +1368,9 @@ def deals_page(
     period_label = {0: "всё время", 24: "за сутки", 168: "за неделю"}.get(
         hours, f"за {hours} ч"
     )
+    from app.domain.coverage import coverage_report
+
+    coverage = coverage_report(db)
     return templates.TemplateResponse(
         request,
         "deals.html",
@@ -1378,6 +1381,7 @@ def deals_page(
             "deal_type": deal_type,
             "hours": hours,
             "period_label": period_label,
+            "coverage": coverage,
         },
     )
 

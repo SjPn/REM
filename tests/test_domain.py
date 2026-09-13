@@ -122,3 +122,25 @@ def test_deal_score_fast_single_source_withdrawn():
         )
     )
     assert result.bucket == DealBucket.LIKELY_WITHDRAWN
+
+
+def test_deal_score_strong_single_source_with_explicit_likely():
+    """Явный sold + типичный срок + не вернулось 14д → likely даже с 1 источником."""
+    now = datetime.now(timezone.utc)
+    result = score_deal(
+        DealScoreInput(
+            deal_type=DealType.SALE,
+            vanished_at=now - timedelta(days=14),
+            first_seen_at=now - timedelta(days=60),
+            vanished_on_sources=1,
+            tracked_sources_for_property=1,
+            active_on_other_sources=0,
+            explicit_sold_or_rented=True,
+            days_since_vanish=14,
+        )
+    )
+    assert result.score >= 70
+    assert result.bucket == DealBucket.LIKELY_DEAL
+    codes = {f.code for f in result.features}
+    assert "vanished_single_source" in codes
+    assert "explicit_status" in codes

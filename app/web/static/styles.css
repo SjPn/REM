@@ -292,6 +292,22 @@ h2 {
   border-top: 1px dashed var(--line-strong);
   border-bottom: 1px dashed var(--line-strong);
 }
+.empty-rich p { margin: 0 0 0.65rem; max-width: 40rem; }
+.empty-rich p:last-child { margin-bottom: 0; }
+.ops-details {
+  margin-top: 1rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(28, 43, 51, 0.03);
+}
+.ops-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+.ops-details[open] summary { margin-bottom: 0.35rem; }
 .sr-only {
   position: absolute;
   width: 1px;
