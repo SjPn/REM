@@ -203,12 +203,18 @@ def _fill_source_until_ready(
 
         cov = coverage_for_source(db, source)
         if cov.vanish_ok:
-            return {"source": source, "ok": True, "history": history}
+            return {
+                "source": source,
+                "ok": True,
+                "pages": pages,
+                "history": history,
+            }
 
         if pages >= page_ceiling:
             return {
                 "source": source,
                 "ok": False,
+                "pages": pages,
                 "history": history,
                 "stuck": "page_ceiling",
                 "reason": cov.vanish_reason,
@@ -225,6 +231,7 @@ def _fill_source_until_ready(
             return {
                 "source": source,
                 "ok": False,
+                "pages": pages,
                 "history": history,
                 "stuck": "no_page_growth",
                 "reason": cov.vanish_reason,
@@ -235,6 +242,7 @@ def _fill_source_until_ready(
     return {
         "source": source,
         "ok": bool(cov.vanish_ok),
+        "pages": pages,
         "history": history,
         "stuck": None if cov.vanish_ok else "max_rounds",
         "reason": cov.vanish_reason,
@@ -289,11 +297,20 @@ def ensure_portal_ready(
         before.all_ready,
     )
 
+    # Страницы, на которых источник реально дошёл до vanish_ok (для reconcile).
+    pages_for_reconcile: dict[str, int] = {}
+
     # --- fill not-ready ---
     for src in srcs:
         snap = snapshot_readiness(db, sources=srcs)
         st = next((s for s in snap.sources if s.source == src), None)
         if st and st.vanish_ok and not (refresh_stale_ok and st.needs_refresh):
+            # уже ок — для vanish берём не меньше last_pages / дефолта
+            pages_for_reconcile[src] = max(
+                int(st.last_pages or 0),
+                backfill_pages_for_source(src),
+                40,
+            )
             continue
         if st and st.vanish_ok and st.needs_refresh:
             # обновим ниже в refresh
@@ -306,7 +323,9 @@ def ensure_portal_ready(
             max_retries=max_retries,
         )
         report["fill"].append(result)
-        if not result.get("ok"):
+        if result.get("ok"):
+            pages_for_reconcile[src] = int(result.get("pages") or backfill_pages_for_source(src))
+        else:
             report["errors"].append(
                 {
                     "source": src,
@@ -356,7 +375,11 @@ def ensure_portal_ready(
                         max_retries=max_retries,
                     )
                     report["fill"].append(result)
-                    if not result.get("ok"):
+                    if result.get("ok"):
+                        pages_for_reconcile[st.source] = int(
+                            result.get("pages") or pages
+                        )
+                    else:
                         report["errors"].append(
                             {
                                 "source": st.source,
@@ -365,6 +388,8 @@ def ensure_portal_ready(
                                 "reason": result.get("reason"),
                             }
                         )
+                else:
+                    pages_for_reconcile[st.source] = pages
             except Exception as exc:  # noqa: BLE001
                 logger.exception("refresh failed %s", st.source)
                 report["errors"].append(
@@ -386,6 +411,10 @@ def ensure_portal_ready(
                 max_retries=max_retries,
             )
             report["fill"].append(result)
+            if result.get("ok"):
+                pages_for_reconcile[st.source] = int(
+                    result.get("pages") or backfill_pages_for_source(st.source)
+                )
 
     final_cov = snapshot_readiness(db, sources=srcs)
     report["coverage_final"] = final_cov.to_dict()
@@ -406,7 +435,14 @@ def ensure_portal_ready(
     ]
     if not skip_reconcile and reconcile_sources:
         for src in reconcile_sources:
-            pages = min(ceiling, max(backfill_pages_for_source(src), 25))
+            pages = min(
+                ceiling,
+                max(
+                    pages_for_reconcile.get(src, 0),
+                    backfill_pages_for_source(src),
+                    40,
+                ),
+            )
             try:
                 logger.info("ensure-ready reconcile-vanish %s pages=%s", src, pages)
                 summary = run_crawl(
