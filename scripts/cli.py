@@ -972,6 +972,24 @@ def repair_overmerged_cmd(
     rprint(summary)
 
 
+@app.command("repair-spaced-prices")
+def repair_spaced_prices_cmd(
+    apply: bool = typer.Option(
+        False, "--apply", help="Записать исправленные цены в БД"
+    ),
+) -> None:
+    """Починить «5 300 $» → ошибочно сохранённые как 300 (фейковые $/м²)."""
+    from app.domain.repair_spaced_prices import repair_spaced_price_bugs
+    from app.domain.ttl_cache import cache_clear
+
+    init_db()
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        summary = repair_spaced_price_bugs(db, dry_run=not apply)
+    cache_clear()
+    rprint(summary)
+
+
 @app.command("fix-mojibake")
 def fix_mojibake_cmd(
     source: Optional[str] = typer.Option("olx", help="Источник (по умолчанию olx)"),
