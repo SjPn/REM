@@ -10,6 +10,16 @@ def test_parse_price_currency_adjacent():
     assert price == 2500
 
 
+def test_parse_price_spaced_thousands_not_partial():
+    """'5 300 $/міс' must be 5300, not trailing group 300 → fake 1.1 $/m²."""
+    price, cur = parse_price("5 300 $/міс")
+    assert cur == "USD"
+    assert price == 5300
+    price2, cur2 = parse_price("5\u00a0300 $/міс 20 $/м²")
+    assert cur2 == "USD"
+    assert price2 == 5300
+
+
 def test_parse_price_skips_per_sqm_chip():
     price, cur = parse_price("3 181 860 $ 495 $/м² Куренівський пров.")
     assert cur == "USD"

@@ -462,6 +462,18 @@ def _collect_price_candidates(text: str) -> list[tuple[float, str, int, int]]:
             num_start = i + m.start(1)
             if num_start > 0 and text[num_start - 1].isdigit():
                 continue
+            # Avoid lone trailing thousand-group: "300" from "5 300 $" (not "250 000" after "17").
+            captured = m.group(1)
+            if (
+                num_start > 0
+                and text[num_start - 1] in " \u00a0"
+                and re.fullmatch(r"\d{3}", captured)
+            ):
+                j = num_start - 2
+                while j >= 0 and text[j] in " \u00a0":
+                    j -= 1
+                if j >= 0 and text[j].isdigit():
+                    continue
             tail = text[i + m.end() : i + m.end() + 12]
             if re.match(
                 r"\s*/\s*м(?:²|2)|\s*/\s*m2|\s*/\s*sqm|\s*за\s*м(?:²|2)",
