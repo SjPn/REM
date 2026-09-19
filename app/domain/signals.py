@@ -53,13 +53,13 @@ def _count_listing_events(
     return db.scalar(q) or 0
 
 
-def _count_new_objects(
+def _candidate_new_properties(
     db: Session,
     since: datetime,
     *,
     deal_type: str | None = None,
-) -> int:
-    """Count distinct properties first observed in the window and still active."""
+) -> list[Property]:
+    """Properties first observed in the window and still showing an active listing."""
     active_listing = (
         select(Listing.id)
         .where(
@@ -71,18 +71,116 @@ def _count_new_objects(
         .limit(1)
         .correlate(Property)
     )
-    q = (
-        select(func.count())
-        .select_from(Property)
-        .where(
-            Property.first_seen_at >= since,
-            Property.is_active.is_(True),
-            active_listing.exists(),
-        )
+    q = select(Property).where(
+        Property.first_seen_at >= since,
+        Property.is_active.is_(True),
+        active_listing.exists(),
     )
     if deal_type:
         q = q.where(Property.deal_type == deal_type)
-    return int(db.scalar(q) or 0)
+    return list(db.scalars(q).all())
+
+
+def _active_listings_for_property(db: Session, property_id: int) -> list[Listing]:
+    return list(
+        db.scalars(
+            select(Listing).where(
+                Listing.property_id == property_id,
+                Listing.status.in_(
+                    [ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value]
+                ),
+            )
+        ).all()
+    )
+
+
+def is_confident_new_object(db: Session, prop: Property) -> bool:
+    """Product signal: likely a real new market object, not portal/URL churn.
+
+    Requires usable identity (address + area), rejects weak-unique fingerprints,
+    and for a single source also requires a phone — multi-source is enough.
+    """
+    from app.domain.property_match import weak_unique_fingerprint
+
+    listings = _active_listings_for_property(db, int(prop.id))
+    if not listings:
+        return False
+    if any(
+        weak_unique_fingerprint(lst.source, lst.external_id, lst.deal_type)
+        == prop.fingerprint
+        for lst in listings
+    ):
+        return False
+
+    address = (prop.address_norm or "").strip()
+    if not address:
+        address = next(
+            ((lst.address_raw or "").strip() for lst in listings if (lst.address_raw or "").strip()),
+            "",
+        )
+    if not address:
+        return False
+
+    area = prop.area_sqm
+    if area is None:
+        area = next((lst.area_sqm for lst in listings if lst.area_sqm is not None), None)
+    if area is None or float(area) <= 0:
+        return False
+
+    sources = {lst.source for lst in listings if lst.source}
+    if len(sources) >= 2:
+        return True
+
+    # Single-source: only with phone (stronger identity than anonymous card).
+    has_phone = any((lst.phone or "").strip() for lst in listings)
+    has_title = bool(
+        (prop.title or "").strip()
+        or any((lst.title or "").strip() for lst in listings)
+    )
+    return has_phone and has_title
+
+
+def _count_new_objects(
+    db: Session,
+    since: datetime,
+    *,
+    deal_type: str | None = None,
+    confident: bool = True,
+) -> int:
+    """Count new properties in the window.
+
+    confident=True (default, product KPI): filters portal churn.
+    confident=False: raw first-seen active properties (ops).
+    """
+    props = _candidate_new_properties(db, since, deal_type=deal_type)
+    if not confident:
+        return len(props)
+    return sum(1 for p in props if is_confident_new_object(db, p))
+
+
+def listing_ids_for_new_objects(
+    db: Session,
+    *,
+    since: datetime,
+    deal_type: str | None = None,
+    confident: bool = True,
+) -> list[int]:
+    """One representative active listing per confident (or raw) new property."""
+    props = _candidate_new_properties(db, since, deal_type=deal_type)
+    ids: list[int] = []
+    for prop in props:
+        if confident and not is_confident_new_object(db, prop):
+            continue
+        listings = _active_listings_for_property(db, int(prop.id))
+        if not listings:
+            continue
+        # Prefer multi-source card order: most recently seen.
+        listings.sort(
+            key=lambda x: (x.last_seen_at or x.first_seen_at, x.id),
+            reverse=True,
+        )
+        ids.append(int(listings[0].id))
+    return ids
 
 
 def _price_drop_events(db: Session, since: datetime, *, deal_type: str | None = None) -> int:
@@ -242,7 +340,54 @@ def listing_ids_for_price_drops(
                 ).all()
             )
         ids = [i for i in ids if i in allowed]
-    return ids
+    return _one_listing_per_property_for_activity(db, ids, deal_type=deal_type)
+
+
+def _one_listing_per_property_for_activity(
+    db: Session,
+    listing_ids: list[int],
+    *,
+    deal_type: str | None,
+) -> list[int]:
+    """Pick one card per property; prefer an active listing when the object is still live."""
+    from collections import defaultdict
+
+    if not listing_ids:
+        return []
+    by_pid: dict[int, list[int]] = defaultdict(list)
+    orphans: list[int] = []
+    property_order: list[int] = []
+    for lid in listing_ids:
+        lst = db.get(Listing, lid)
+        if lst is None:
+            continue
+        if lst.property_id is None:
+            orphans.append(int(lid))
+            continue
+        pid = int(lst.property_id)
+        by_pid[pid].append(int(lid))
+        if pid not in property_order:
+            property_order.append(pid)
+
+    out: list[int] = []
+    for pid in property_order:
+        active_q = select(Listing.id).where(
+            Listing.property_id == pid,
+            Listing.status.in_(
+                [ListingStatus.ACTIVE.value, ListingStatus.RELISTED.value]
+            ),
+        )
+        if deal_type:
+            active_q = active_q.where(Listing.deal_type == deal_type)
+        active_id = db.scalar(
+            active_q.order_by(Listing.last_seen_at.desc()).limit(1)
+        )
+        if active_id is not None:
+            out.append(int(active_id))
+        else:
+            out.append(by_pid[pid][0])
+    out.extend(orphans)
+    return out
 
 
 def activity_summary(
@@ -272,13 +417,14 @@ def activity_summary(
             marked_q = marked_q.where(Listing.deal_type == deal_type)
         sold_or_rented = db.scalar(marked_q) or 0
 
+        # Сделки за окно: учитываем rescore (updated_at), не только первый create.
         likely_q = (
             select(func.count())
             .select_from(DealHypothesis)
             .join(Listing, DealHypothesis.listing_id == Listing.id)
             .where(
                 DealHypothesis.bucket == "likely_deal",
-                DealHypothesis.created_at >= since,
+                DealHypothesis.updated_at >= since,
             )
         )
         if deal_type:
@@ -290,7 +436,12 @@ def activity_summary(
             "new_listings": _count_listing_events(
                 db, EventType.APPEARED.value, since, deal_type=deal_type
             ),
-            "new_objects": _count_new_objects(db, since, deal_type=deal_type),
+            "new_objects": _count_new_objects(
+                db, since, deal_type=deal_type, confident=True
+            ),
+            "new_objects_raw": _count_new_objects(
+                db, since, deal_type=deal_type, confident=False
+            ),
             "vanished": _count_property_vanished_events(
                 db, since, deal_type=deal_type
             ),

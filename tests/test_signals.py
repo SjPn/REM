@@ -123,6 +123,9 @@ def test_activity_counts_unique_new_objects_not_source_listings(tmp_path, monkey
         prop = Property(
             fingerprint="new-object",
             deal_type="sale",
+            title="Офис на Крещатике",
+            address_norm="хрещатик 1",
+            area_sqm=120.0,
             first_seen_at=now,
             last_seen_at=now,
             is_active=True,
@@ -130,12 +133,35 @@ def test_activity_counts_unique_new_objects_not_source_listings(tmp_path, monkey
         old_prop = Property(
             fingerprint="old-object",
             deal_type="sale",
+            title="Старый",
+            address_norm="старая 2",
+            area_sqm=80.0,
             first_seen_at=now - timedelta(days=2),
             last_seen_at=now,
             is_active=True,
         )
-        db.add_all([prop, old_prop])
+        weak = Property(
+            fingerprint="weak-hash",
+            deal_type="sale",
+            first_seen_at=now,
+            last_seen_at=now,
+            is_active=True,
+        )
+        single_no_phone = Property(
+            fingerprint="single-no-phone",
+            deal_type="sale",
+            title="Склад",
+            address_norm="складская 3",
+            area_sqm=200.0,
+            first_seen_at=now,
+            last_seen_at=now,
+            is_active=True,
+        )
+        db.add_all([prop, old_prop, weak, single_no_phone])
         db.flush()
+        from app.domain.property_match import weak_unique_fingerprint
+
+        weak.fingerprint = weak_unique_fingerprint("olx", "weak-1", "sale")
         db.add_all(
             [
                 Listing(
@@ -145,6 +171,10 @@ def test_activity_counts_unique_new_objects_not_source_listings(tmp_path, monkey
                     url="https://example.test/new-lun",
                     deal_type="sale",
                     status="active",
+                    title="Офис",
+                    address_raw="Хрещатик 1",
+                    area_sqm=120.0,
+                    phone="380501112233",
                 ),
                 Listing(
                     property_id=prop.id,
@@ -153,6 +183,9 @@ def test_activity_counts_unique_new_objects_not_source_listings(tmp_path, monkey
                     url="https://example.test/new-rieltor",
                     deal_type="sale",
                     status="active",
+                    title="Офис",
+                    address_raw="Хрещатик 1",
+                    area_sqm=120.0,
                 ),
                 Listing(
                     property_id=old_prop.id,
@@ -162,6 +195,29 @@ def test_activity_counts_unique_new_objects_not_source_listings(tmp_path, monkey
                     deal_type="sale",
                     status="active",
                 ),
+                Listing(
+                    property_id=weak.id,
+                    source="olx",
+                    external_id="weak-1",
+                    url="https://example.test/weak",
+                    deal_type="sale",
+                    status="active",
+                    phone="380509998877",
+                    address_raw="somewhere",
+                    area_sqm=50.0,
+                    title="weak",
+                ),
+                Listing(
+                    property_id=single_no_phone.id,
+                    source="domria",
+                    external_id="single-1",
+                    url="https://example.test/single",
+                    deal_type="sale",
+                    status="active",
+                    title="Склад",
+                    address_raw="Складская 3",
+                    area_sqm=200.0,
+                ),
             ]
         )
         db.commit()
@@ -169,6 +225,61 @@ def test_activity_counts_unique_new_objects_not_source_listings(tmp_path, monkey
         stats = activity_summary(db, hours=24, deal_type="sale")
 
     assert stats["new_objects"] == 1
+    assert stats["new_objects_raw"] == 3
+
+
+def test_confident_new_single_source_with_phone(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    db_path = tmp_path / "new_single.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    from app.config import get_settings
+    from app.db import models as db_models
+    from app.db.models import Listing, Property, get_session_factory, init_db
+    from app.domain.signals import activity_summary, listing_ids_for_new_objects
+    from app.domain.ttl_cache import cache_clear
+
+    get_settings.cache_clear()
+    cache_clear()
+    db_models._engine = None
+    db_models._SessionLocal = None
+    init_db()
+    now = datetime.now(timezone.utc)
+    with get_session_factory()() as db:
+        prop = Property(
+            fingerprint="single-phone",
+            deal_type="sale",
+            title="Офис",
+            address_norm="подол 10",
+            area_sqm=90.0,
+            first_seen_at=now,
+            last_seen_at=now,
+            is_active=True,
+        )
+        db.add(prop)
+        db.flush()
+        db.add(
+            Listing(
+                property_id=prop.id,
+                source="olx",
+                external_id="olx-1",
+                url="https://example.test/olx-1",
+                deal_type="sale",
+                status="active",
+                title="Офис",
+                address_raw="Подол 10",
+                area_sqm=90.0,
+                phone="380671112233",
+            )
+        )
+        db.commit()
+        stats = activity_summary(db, hours=24, deal_type="sale")
+        ids = listing_ids_for_new_objects(
+            db, since=now - __import__("datetime").timedelta(hours=1), deal_type="sale"
+        )
+
+    assert stats["new_objects"] == 1
+    assert len(ids) == 1
 
 
 def test_portal_blocked_error():
@@ -313,6 +424,75 @@ def test_listing_ids_for_activity(tmp_path, monkeypatch):
     assert called["sec"] == 1.0
     sleep_crawl_delay(blocked=True)
     assert called["sec"] == 8.0
+
+
+def test_price_drop_prefers_active_listing_on_same_property(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    db_path = tmp_path / "pd_rep.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    from app.config import get_settings
+    from app.db import models as db_models
+    from app.db.models import Listing, Property, PropertyEvent, get_session_factory, init_db
+    from app.domain.signals import listing_ids_for_price_drops
+
+    get_settings.cache_clear()
+    db_models._engine = None
+    db_models._SessionLocal = None
+    init_db()
+    now = datetime.now(timezone.utc)
+    with get_session_factory()() as db:
+        prop = Property(
+            fingerprint="fp-pd-repub",
+            deal_type="sale",
+            property_type="office",
+            is_active=True,
+        )
+        db.add(prop)
+        db.flush()
+        vanished = Listing(
+            source="domria",
+            external_id="old",
+            url="https://e/old",
+            deal_type="sale",
+            property_id=prop.id,
+            status="vanished",
+            address_raw="вул. Хорива, 21",
+            area_sqm=135.0,
+            floor=2,
+            price=67500,
+            currency="USD",
+            first_seen_at=now - timedelta(days=2),
+            last_seen_at=now,
+        )
+        active = Listing(
+            source="domria",
+            external_id="new",
+            url="https://e/new",
+            deal_type="sale",
+            property_id=prop.id,
+            status="active",
+            address_raw="вул. Хорива, 21",
+            area_sqm=135.0,
+            floor=2,
+            price=67500,
+            currency="USD",
+            first_seen_at=now - timedelta(days=1),
+            last_seen_at=now,
+        )
+        db.add_all([vanished, active])
+        db.flush()
+        db.add(
+            PropertyEvent(
+                listing_id=vanished.id,
+                event_type="price_changed",
+                occurred_at=now,
+                payload={"old_price": 450000, "new_price": 67500, "currency": "USD"},
+            )
+        )
+        db.commit()
+        since = now - timedelta(hours=24)
+        assert listing_ids_for_price_drops(db, since=since, deal_type="sale") == [active.id]
 
 
 def test_activity_summary_respects_deal_type(tmp_path, monkeypatch):

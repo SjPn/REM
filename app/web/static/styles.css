@@ -372,6 +372,19 @@ a.ov-card:hover {
 a.ov-card.is-deal:hover {
   border-color: #2563a8;
 }
+.ov-card.is-ops {
+  background: var(--surface);
+  border-color: var(--line);
+  opacity: 0.92;
+}
+.ov-card.is-ops .ov-l {
+  color: var(--muted, #667);
+}
+.ov-card.is-ops.is-on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(12, 107, 92, 0.12);
+  opacity: 1;
+}
 .overview-compact {
   grid-template-columns: minmax(0, 1fr);
   max-width: 28rem;

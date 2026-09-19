@@ -15,7 +15,7 @@
         {% endif %}
         · медиана {{ fmt_psm(market_slice.city_median_psm, deal_type) }}
         {% if deal_type == 'rent' and rent_slice_label %} · {{ rent_slice_label }}{% endif %}
-        <span class="muted"> · новые, уценённые и исчезнувшие — ниже</span>
+        <span class="muted"> · цель: новые объекты, уценки и сделки</span>
         {% if last_updated_at %}
           <span class="muted"> · обновлено {{ last_updated_at.strftime('%d.%m.%Y %H:%M') }}</span>
         {% endif %}
@@ -32,31 +32,36 @@
   </div>
 
   <section class="overview" aria-label="Сводка">
-    <a class="ov-card is-accent" href="/?deal_type={{ deal_type }}&period=24h">
-      <div class="ov-n">{{ activity_stats.new_listings }}</div>
-      <div class="ov-l">Новые объявления</div>
-    </a>
     <a class="ov-card is-accent {% if activity_filter == 'new' %}is-on{% endif %}"
        href="/?deal_type={{ deal_type }}&activity=new"
-       title="Уникальные объекты, впервые замеченные системой за последние 24 часа и ещё активные">
+       title="Уверенные новые объекты: адрес+площадь, не weak-карточка; ≥2 источника или телефон">
       <div class="ov-n">{{ activity_stats.new_objects }}</div>
       <div class="ov-l">Новые объекты</div>
     </a>
-    <a class="ov-card is-accent {% if activity_filter == 'vanished' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=vanished" title="Исчезли с площадок за сутки — объект не активен ни на одном источнике">
-      <div class="ov-n">{{ activity_stats.vanished }}</div>
-      <div class="ov-l">Исчезли</div>
-    </a>
-    <a class="ov-card is-accent {% if activity_filter == 'price_drop' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=price_drop">
+    <a class="ov-card is-accent {% if activity_filter == 'price_drop' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=price_drop"
+       title="Снижение цены у активных объявлений за сутки">
       <div class="ov-n">{{ activity_stats.price_drops }}</div>
       <div class="ov-l">Уценили</div>
     </a>
-    <a class="ov-card is-deal" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}" title="Оценка исчезнувших: похоже на сделку или сняли">
+    <a class="ov-card is-deal" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}"
+       title="Гипотеза сделки по исчезнувшим — не сырое «пропало с сайта»">
       <div class="ov-n">{{ activity_stats.likely_deals }}</div>
       <div class="ov-l">Похоже на сделку</div>
     </a>
-    <a class="ov-card {% if activity_filter == 'sold' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=sold" title="Явная метка площадки sold/rented — отдельно от «исчезло»">
+    <a class="ov-card is-deal {% if activity_filter == 'sold' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=sold"
+       title="Явная метка площадки sold/rented — отдельно от гипотез">
       <div class="ov-n">{{ activity_stats.sold_or_rented }}</div>
       <div class="ov-l">{% if deal_type == 'sale' %}Продано{% else %}Сдано{% endif %}</div>
+    </a>
+    <a class="ov-card is-ops" href="/?deal_type={{ deal_type }}&period=24h"
+       title="Сырые новые карточки на площадках (вкл. перепубликации). Не то же, что «новые объекты»">
+      <div class="ov-n">{{ activity_stats.new_listings }}</div>
+      <div class="ov-l">Новые объявления</div>
+    </a>
+    <a class="ov-card is-ops {% if activity_filter == 'vanished' %}is-on{% endif %}" href="/?deal_type={{ deal_type }}&activity=vanished"
+       title="Сырой сигнал: объект не виден ни на одном источнике. Не равно «продано» — смотрите «Похоже на сделку»">
+      <div class="ov-n">{{ activity_stats.vanished }}</div>
+      <div class="ov-l">Сняты с площадок</div>
     </a>
     {% if stats_excluded_n %}
     <a class="ov-card is-warn {% if stats_excluded_filter %}is-on{% endif %}"
@@ -72,7 +77,7 @@
   <section class="deal-preview-section" aria-label="Возможные сделки">
     <div class="section-head tight">
       <h2>Возможные сделки</h2>
-      <span class="muted">Исчезли с площадок · не влияют на медиану активных</span>
+      <span class="muted">Исчезли с площадок · гипотеза сделки, не медиана активных</span>
       <a class="link-more" href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">Все сделки →</a>
     </div>
     <div class="deal-preview-list">
@@ -81,9 +86,15 @@
   </section>
   {% endif %}
 
+  {% if activity_filter == 'new' %}
+  <p class="filter-note">
+    Уверенные новые объекты за сутки (адрес + площадь; ≥2 источника или телефон).
+    Сырые карточки площадок — в счётчике «Новые объявления».
+  </p>
+  {% endif %}
   {% if activity_filter == 'vanished' %}
   <p class="filter-note">
-    Список исчезнувших за сутки (сырые события). Оценка «похоже на сделку» —
+    Список снятых с площадок за сутки (сырой сигнал, не сделки). Оценка «похоже на сделку» —
     <a href="/deals?bucket=likely_deal&deal_type={{ deal_type }}">в разделе «Сделки»</a>.
   </p>
   {% endif %}
@@ -247,7 +258,7 @@
       <div class="section-head">
         <h2>Список</h2>
         <span class="muted">
-          {% if stats_excluded_filter %}вне статистики · {% elif activity_filter == 'vanished' %}исчезли за сутки · {% elif activity_filter == 'price_drop' %}уценили за сутки · {% endif %}
+          {% if stats_excluded_filter %}вне статистики · {% elif activity_filter == 'new' %}новые объекты · {% elif activity_filter == 'vanished' %}сняты с площадок · {% elif activity_filter == 'price_drop' %}уценили за сутки · {% endif %}
           {{ total }} · стр. {{ page }}/{{ pages }}
           {% if stats_excluded_filter or activity_filter %}<a class="link-more" href="/?deal_type={{ deal_type }}">сбросить</a>{% endif %}
         </span>

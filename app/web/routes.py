@@ -31,6 +31,7 @@ from app.domain.market_stats import (
 from app.domain.deals_preview import deal_bucket_counts, recent_deal_hypotheses
 from app.domain.pricing import effective_listing_psm_usd, sanitize_price_per_sqm
 from app.domain.ttl_cache import cache_clear
+from app.domain.search import listing_text_search_filter
 from app.domain.seller_stress import compute_seller_stress
 from app.domain.signals import (
     OPEX_UNKNOWN,
@@ -40,11 +41,13 @@ from app.domain.signals import (
     below_market_hint,
     MarketHint,
     classify_seller,
+    listing_ids_for_new_objects,
     listing_ids_for_price_drops,
     listing_ids_for_vanished,
     listing_psm_usd,
     resolve_listing_opex,
 )
+from app.domain.listing_urls import listing_portal_url
 from app.domain.enums import EventType
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -90,6 +93,20 @@ def _parse_optional_float(value: float | str | None) -> float | None:
     if not math.isfinite(v) or v < 0:
         return None
     return v
+
+
+def _empty_as_none(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _parse_optional_choice(value: str | None, allowed: set[str]) -> str | None:
+    value = _empty_as_none(value)
+    if value is None or value not in allowed:
+        return None
+    return value
 
 
 def _listing_price_usd(lst: Listing) -> float | None:
@@ -422,7 +439,7 @@ def _tel_href(phone: str | None) -> str | None:
     return f"tel:+{digits}"
 
 
-templates.env.globals["fmt_phone"] = _fmt_phone
+templates.env.globals["listing_portal_url"] = listing_portal_url
 templates.env.globals["tel_href"] = _tel_href
 
 # SQLite default SQLITE_MAX_VARIABLE_NUMBER ≈ 999; keep headroom.
@@ -446,18 +463,59 @@ def _in_chunks(column, ids: list[int]):
 
 
 def _portal_counts(db: Session, property_ids: list[int]) -> dict[int, int]:
+    """Distinct active portals per property (not raw listing count)."""
     if not property_ids:
         return {}
     uniq = list({int(p) for p in property_ids if p is not None})
     out: dict[int, int] = {}
     for chunk in _chunks(uniq):
         rows = db.execute(
-            select(Listing.property_id, func.count())
-            .where(Listing.property_id.in_(chunk))
+            select(Listing.property_id, func.count(func.distinct(Listing.source)))
+            .where(
+                Listing.property_id.in_(chunk),
+                Listing.status.in_(["active", "relisted"]),
+            )
             .group_by(Listing.property_id)
         ).all()
         out.update({int(pid): int(n) for pid, n in rows if pid is not None})
     return out
+
+
+def _dedupe_listings_by_property(listings: list) -> list:
+    """One card per property; prefer active/relisted over vanished."""
+    best_by_pid: dict[int, object] = {}
+
+    def rank(lst) -> tuple:
+        status_rank = {"active": 0, "relisted": 1, "vanished": 2}.get(
+            lst.status or "", 3
+        )
+        seen = lst.last_seen_at or lst.first_seen_at
+        ts = seen.timestamp() if seen is not None else 0.0
+        return (status_rank, -ts, -(lst.id or 0))
+
+    for lst in listings:
+        pid = int(lst.property_id) if lst.property_id is not None else -int(lst.id)
+        cur = best_by_pid.get(pid)
+        if cur is None or rank(lst) < rank(cur):
+            best_by_pid[pid] = lst
+
+    seen_pids: set[int] = set()
+    out = []
+    for lst in listings:
+        pid = int(lst.property_id) if lst.property_id is not None else -int(lst.id)
+        if pid in seen_pids:
+            continue
+        out.append(best_by_pid[pid])
+        seen_pids.add(pid)
+    return out
+
+
+def _one_per_property_id_subquery(filters):
+    return (
+        select(func.max(Listing.id).label("listing_id"))
+        .where(*filters)
+        .group_by(func.coalesce(Listing.property_id, -Listing.id))
+    )
 
 
 def _portal_spreads(db: Session, property_ids: list[int]) -> dict[int, dict]:
@@ -555,6 +613,64 @@ def _recent_price_drop_map(
             "currency": payload.get("currency"),
             "occurred_at": ev.occurred_at,
         }
+
+    # Price drop may be recorded on a vanished sibling after portal republish.
+    missing_ids = [i for i in uniq if i not in out]
+    if missing_ids:
+        rows = list(
+            db.scalars(
+                select(Listing).where(
+                    Listing.id.in_(missing_ids),
+                    Listing.property_id.is_not(None),
+                )
+            ).all()
+        )
+        pids = list({int(x.property_id) for x in rows if x.property_id is not None})
+        prop_events: list[PropertyEvent] = []
+        for chunk in _chunks(pids):
+            prop_events.extend(
+                db.scalars(
+                    select(PropertyEvent)
+                    .join(Listing, PropertyEvent.listing_id == Listing.id)
+                    .where(
+                        Listing.property_id.in_(chunk),
+                        PropertyEvent.event_type == EventType.PRICE_CHANGED.value,
+                        PropertyEvent.occurred_at >= since,
+                    )
+                    .order_by(PropertyEvent.occurred_at.desc())
+                ).all()
+            )
+        best_by_pid: dict[int, dict] = {}
+        for ev in prop_events:
+            if ev.listing_id is None:
+                continue
+            lst = db.get(Listing, int(ev.listing_id))
+            if lst is None or lst.property_id is None:
+                continue
+            pid = int(lst.property_id)
+            if pid in best_by_pid:
+                continue
+            payload = ev.payload or {}
+            try:
+                old_p = float(payload["old_price"])
+                new_p = float(payload["new_price"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if new_p >= old_p:
+                continue
+            delta_pct = round((old_p - new_p) / old_p * 100.0, 1) if old_p > 0 else None
+            best_by_pid[pid] = {
+                "old_price": old_p,
+                "new_price": new_p,
+                "delta_pct": delta_pct,
+                "currency": payload.get("currency"),
+                "occurred_at": ev.occurred_at,
+            }
+        for x in rows:
+            if x.id is None or x.property_id is None:
+                continue
+            if int(x.property_id) in best_by_pid:
+                out[int(x.id)] = best_by_pid[int(x.property_id)]
     return out
 
 
@@ -732,10 +848,10 @@ def dashboard(
     q: str | None = None,
     period: str | None = None,
     district: str | None = None,
-    activity: str | None = Query(None, pattern="^(new|vanished|price_drop|sold)$"),
+    activity: str | None = Query(None),
     stats_excluded: int = Query(0, ge=0, le=1),
-    seller: str | None = Query(None, pattern="^(owner|agency|unknown)$"),
-    opex: str | None = Query(None, pattern="^(with|without|unknown)$"),
+    seller: str | None = Query(None),
+    opex: str | None = Query(None),
     below_market: int = Query(0, ge=0, le=1),
     sort: str = Query("newest"),
     # str: HTML forms send empty strings (price_min=), not omit the key.
@@ -748,6 +864,15 @@ def dashboard(
 ):
     if sort not in _SORT_VALUES:
         sort = "newest"
+    source = _empty_as_none(source)
+    segment = _empty_as_none(segment)
+    q = _empty_as_none(q)
+    period = _empty_as_none(period)
+    activity = _parse_optional_choice(
+        activity, {"new", "vanished", "price_drop", "sold"}
+    )
+    seller = _parse_optional_choice(seller, {"owner", "agency", "unknown"})
+    opex = _parse_optional_choice(opex, {"with", "without", "unknown"})
     if district:
         district = normalize_district(district) or (
             district if district in KYIV_DISTRICTS else None
@@ -797,17 +922,9 @@ def dashboard(
     activity_since = datetime.now(timezone.utc) - timedelta(hours=24)
     activity_ids: list[int] | None = None
     if activity_filter == "new":
-        new_properties = select(Property.id).where(
-            Property.first_seen_at >= activity_since,
-            Property.is_active.is_(True),
-            Property.deal_type == deal_type,
+        activity_ids = listing_ids_for_new_objects(
+            db, since=activity_since, deal_type=deal_type, confident=True
         )
-        filters = [
-            Listing.deal_type == deal_type,
-            Listing.status.in_(["active", "relisted"]),
-            Listing.price.is_not(None),
-            Listing.property_id.in_(new_properties),
-        ]
     elif activity_filter == "vanished":
         activity_ids = listing_ids_for_vanished(
             db, since=activity_since, deal_type=deal_type
@@ -818,7 +935,16 @@ def dashboard(
         )
 
     if activity_filter == "new":
-        pass
+        filters = [
+            Listing.deal_type == deal_type,
+            Listing.status.in_(["active", "relisted"]),
+            Listing.price.is_not(None),
+        ]
+        if activity_ids is not None:
+            if activity_ids:
+                filters.append(_in_chunks(Listing.id, activity_ids))
+            else:
+                filters.append(Listing.id == -1)
     elif activity_filter == "vanished":
         filters = [
             Listing.deal_type == deal_type,
@@ -875,15 +1001,9 @@ def dashboard(
     if since is not None and activity_filter is None:
         filters.append(Listing.first_seen_at >= since)
     if q:
-        like = f"%{q.strip()}%"
-        filters.append(
-            or_(
-                Listing.title.ilike(like),
-                Listing.address_raw.ilike(like),
-                Listing.district.ilike(like),
-                Listing.city.ilike(like),
-            )
-        )
+        search_clause = listing_text_search_filter(q)
+        if search_clause is not None:
+            filters.append(search_clause)
     # Area can be narrowed in SQL; price ranges use USD in Python (mixed currencies).
     if area_min is not None:
         filters.append(Listing.area_sqm >= area_min)
@@ -930,6 +1050,7 @@ def dashboard(
                 select(Listing).where(*filters).order_by(order).limit(2500)
             ).all()
         )
+        candidates = _dedupe_listings_by_property(candidates)
         if activity_filter == "new":
             # One representative listing per newly observed property.
             unique_candidates = []
@@ -977,15 +1098,29 @@ def dashboard(
         if missing:
             signals.update(_annotate_listings(db, missing, market))
     else:
-        total = db.scalar(select(func.count()).select_from(Listing).where(*filters)) or 0
+        rep_subq = _one_per_property_id_subquery(filters).subquery()
+        total = (
+            db.scalar(select(func.count()).select_from(rep_subq)) or 0
+        )
         pages = max(1, (total + per_page - 1) // per_page)
         page = min(page, pages)
         offset = (page - 1) * per_page
-        listings = list(
+        rep_ids = list(
             db.scalars(
-                select(Listing).where(*filters).order_by(order).offset(offset).limit(per_page)
+                select(rep_subq.c.listing_id)
+                .order_by(rep_subq.c.listing_id.desc())
+                .offset(offset)
+                .limit(per_page)
             ).all()
         )
+        if rep_ids:
+            listings = list(
+                db.scalars(select(Listing).where(Listing.id.in_(rep_ids))).all()
+            )
+            order_map = {lid: i for i, lid in enumerate(rep_ids)}
+            listings.sort(key=lambda x: order_map.get(x.id, 10**9))
+        else:
+            listings = []
         signals = _annotate_listings(db, listings, market)
 
     deal_preview = [
