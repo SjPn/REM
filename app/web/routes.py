@@ -31,7 +31,7 @@ from app.domain.market_stats import (
 from app.domain.deals_preview import deal_bucket_counts, recent_deal_hypotheses
 from app.domain.pricing import effective_listing_psm_usd, sanitize_price_per_sqm
 from app.domain.ttl_cache import cache_clear
-from app.domain.search import listing_text_search_filter
+from app.domain.search import listing_text_search_filter, search_relevance_tier
 from app.domain.seller_stress import compute_seller_stress
 from app.domain.signals import (
     OPEX_UNKNOWN,
@@ -139,8 +139,14 @@ def _sql_order(sort: str, *, period: str | None):
     return Listing.last_seen_at.desc()
 
 
-def _sort_listings_in_memory(rows: list[Listing], sort: str) -> list[Listing]:
-    """Stable-ish sorts; USD for price/psm so UAH and USD don't mix wrongly."""
+def _sort_listings_in_memory(
+    rows: list[Listing], sort: str, *, q: str | None = None
+) -> list[Listing]:
+    """Stable-ish sorts; USD for price/psm so UAH and USD don't mix wrongly.
+
+    When ``q`` has a street + house number, full matches (street+N) rank above
+    other hits on the same street; the chosen sort stays within each tier.
+    """
     reverse = sort.endswith("_desc") or sort == "newest"
 
     def key_price(x: Listing):
@@ -177,6 +183,11 @@ def _sort_listings_in_memory(rows: list[Listing], sort: str) -> list[Listing]:
         rows = sorted(rows, key=key_seen, reverse=False)
     elif sort == "newest":
         rows = sorted(rows, key=key_seen, reverse=True)
+    if (q or "").strip():
+        # Stable: keep previous order inside the same relevance tier.
+        rows = sorted(
+            rows, key=lambda x: search_relevance_tier(x, q), reverse=True
+        )
     return rows
 
 
@@ -1041,6 +1052,7 @@ def dashboard(
         or price_max is not None
         or activity_ids is not None
         or sort in ("price_asc", "price_desc", "psm_asc", "psm_desc", "dom_asc", "dom_desc")
+        or bool((q or "").strip())  # street+house relevance ranking
     )
     order = _sql_order(sort, period=period)
 
@@ -1085,8 +1097,14 @@ def dashboard(
         if activity_ids is not None and sort == "newest":
             rank = {lid: i for i, lid in enumerate(activity_ids)}
             candidates.sort(key=lambda x: rank.get(x.id, 10**9))
+            if (q or "").strip():
+                candidates = sorted(
+                    candidates,
+                    key=lambda x: search_relevance_tier(x, q),
+                    reverse=True,
+                )
         else:
-            candidates = _sort_listings_in_memory(candidates, sort)
+            candidates = _sort_listings_in_memory(candidates, sort, q=q)
         total = len(candidates)
         pages = max(1, (total + per_page - 1) // per_page)
         page = min(page, pages)
