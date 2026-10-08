@@ -4,6 +4,7 @@ import logging
 import math
 import random
 import re
+import threading
 import time
 from typing import Any
 from urllib.parse import urlsplit
@@ -46,6 +47,7 @@ _UA_POOL = (
 )
 
 # Module-level request counter for rare "coffee breaks" across scrapers in one process.
+_pace_lock = threading.Lock()
 _pace_state: dict[str, Any] = {
     "count": 0,
     "next_break_at": random.randint(8, 15),
@@ -167,19 +169,21 @@ def _maybe_session_break() -> None:
     settings = get_settings()
     if not settings.crawl_human_mode:
         return
-    _pace_state["count"] = int(_pace_state["count"]) + 1
-    if int(_pace_state["count"]) < int(_pace_state["next_break_at"]):
-        return
-    lo = float(settings.crawl_break_sec_min)
-    hi = float(settings.crawl_break_sec_max)
-    if hi < lo:
-        lo, hi = hi, lo
-    pause = random.uniform(max(5.0, lo), max(lo, hi))
-    logger.info("crawl coffee break %.0fs after %s requests", pause, _pace_state["count"])
+    with _pace_lock:
+        _pace_state["count"] = int(_pace_state["count"]) + 1
+        count = int(_pace_state["count"])
+        if count < int(_pace_state["next_break_at"]):
+            return
+        lo = float(settings.crawl_break_sec_min)
+        hi = float(settings.crawl_break_sec_max)
+        if hi < lo:
+            lo, hi = hi, lo
+        pause = random.uniform(max(5.0, lo), max(lo, hi))
+        every_lo = max(3, int(settings.crawl_break_every_min))
+        every_hi = max(every_lo, int(settings.crawl_break_every_max))
+        _pace_state["next_break_at"] = count + random.randint(every_lo, every_hi)
+    logger.info("crawl coffee break %.0fs after %s requests", pause, count)
     time.sleep(pause)
-    every_lo = max(3, int(settings.crawl_break_every_min))
-    every_hi = max(every_lo, int(settings.crawl_break_every_max))
-    _pace_state["next_break_at"] = int(_pace_state["count"]) + random.randint(every_lo, every_hi)
 
 
 def _normalize_proxy(url: str | None) -> str | None:

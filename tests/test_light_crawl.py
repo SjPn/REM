@@ -136,6 +136,31 @@ def test_lun_crawl_stops_on_repeated_ids(monkeypatch):
     assert all("page=4" not in url for url in client.urls)
 
 
+def test_light_needs_detail_does_not_hold_a_read_transaction(tmp_path, monkeypatch):
+    db_path = tmp_path / "light.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    from app.config import get_settings
+    from app.db import models as db_models
+    from app.db.models import get_session_factory, init_db
+    from app.pipeline.light_day import _light_needs_detail
+
+    get_settings.cache_clear()
+    db_models._engine = None
+    db_models._SessionLocal = None
+    init_db()
+    with get_session_factory()() as db:
+        needs = _light_needs_detail(db)
+        assert needs(
+            RawListing(
+                source="lun",
+                external_id="missing",
+                url="https://lun.ua/x",
+                deal_type="sale",
+            )
+        ) is True
+        assert db.in_transaction() is False
+
+
 def test_light_day_fetches_sources_in_parallel(monkeypatch):
     from app.pipeline import light_day
     from app.scrapers import SCRAPERS

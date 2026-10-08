@@ -6,17 +6,39 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.db.models import Listing
+from app.domain.list_card import needs_detail_fetch
 from app.domain.market_history import record_market_snapshot
 from app.pipeline.ingest import ingest_many
-from app.pipeline.runner import _build_needs_detail
 from app.scrapers import SCRAPERS, crawl_source
 from app.scrapers.base import RawListing
 from app.scrapers.http_utils import HttpClient
 
 logger = logging.getLogger(__name__)
+
+
+def _light_needs_detail(db: Session):
+    """Короткое чтение карточки. Транзакцию не держим на время HTTP."""
+    db.expire_on_commit = False
+    cache: dict[tuple[str, str], Listing | None] = {}
+
+    def needs_detail(raw: RawListing) -> bool:
+        key = (raw.source, raw.external_id)
+        if key not in cache:
+            cache[key] = db.scalar(
+                select(Listing).where(
+                    Listing.source == raw.source,
+                    Listing.external_id == raw.external_id,
+                )
+            )
+            db.rollback()
+        return needs_detail_fetch(cache[key], raw)
+
+    return needs_detail
 
 
 def _fetch_one(
@@ -29,7 +51,7 @@ def _fetch_one(
 
     try:
         with get_session_factory()() as db:
-            needs = _build_needs_detail(db, prefer_weak=False)
+            needs = _light_needs_detail(db)
             with HttpClient(list_fast=True) as client:
                 items = list(
                     crawl_source(
@@ -67,6 +89,7 @@ def run_light_day(
     if unknown:
         raise KeyError(f"Unknown source: {unknown}. Available: {list(SCRAPERS)}")
 
+    started_at = datetime.now(timezone.utc).isoformat()
     prev_enrich = settings.enrich_details
     prev_max = settings.max_detail_pages
     settings.enrich_details = True
@@ -103,7 +126,7 @@ def run_light_day(
         "max_pages": pages,
         "max_details": details,
         "stale_page_limit": stale,
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": started_at,
         "sources": {},
     }
     for source in selected:
