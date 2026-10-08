@@ -417,6 +417,44 @@ def ensure_ready_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command("light-day")
+def light_day_cmd(
+    sources: Optional[str] = typer.Option(
+        None, help="Comma list; default all scrapers"
+    ),
+    max_pages: Optional[int] = typer.Option(
+        None, min=1, max=20, help="Pages per feed (default LIGHT_MAX_PAGES)"
+    ),
+    max_details: Optional[int] = typer.Option(
+        None, min=0, max=200, help="Detail cap per source for new/changed cards"
+    ),
+) -> None:
+    """Ежедневный лёгкий сбор: верх выдачи, новые и уценки, без vanish.
+
+    Площадки качаются параллельно. Лента останавливается, когда страница
+    не принесла новых id. Полный ensure-ready — редкая сверка сделок, не каждый день.
+    """
+    import json
+
+    from app.pipeline.light_day import run_light_day
+
+    init_db()
+    src_list = (
+        [s.strip() for s in sources.split(",") if s.strip()] if sources else None
+    )
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        report = run_light_day(
+            db,
+            sources=src_list,
+            max_pages=max_pages,
+            max_details=max_details,
+        )
+    print(json.dumps(report, ensure_ascii=True, indent=2, default=str))
+    if not report.get("ok"):
+        raise typer.Exit(code=1)
+
+
 @app.command("clean-junk")
 def clean_junk() -> None:
     """Remove non-Kyiv URLs and nonsensical prices (inf / absurd)."""

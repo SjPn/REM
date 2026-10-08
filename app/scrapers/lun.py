@@ -24,6 +24,7 @@ from app.scrapers.detail import (
 )
 from app.scrapers.enrich import enrich_listings
 from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area
+from app.scrapers.paging import iter_feed_pages
 
 logger = logging.getLogger(__name__)
 
@@ -46,26 +47,26 @@ class LunScraper:
         self,
         max_pages: int | None = None,
         needs_detail: Callable[[RawListing], bool] | None = None,
+        *,
+        stale_page_limit: int = 2,
+        max_details: int | None = None,
     ) -> Iterator[RawListing]:
         pages = max_pages or self.settings.crawl_max_pages
         entries = list(LUN_SEARCH.items())
         if self.settings.crawl_human_mode:
             random.shuffle(entries)
         for (deal_type, zone), base_url in entries:
-            batch: list[RawListing] = []
-            for page in range(1, pages + 1):
-                url = base_url if page == 1 else f"{base_url}?page={page}"
-                logger.info("LUN fetch %s", url)
-                try:
-                    html = self.client.get_text(url)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("LUN page failed %s: %s", url, exc)
-                    break
-                items = self._parse_list(html, deal_type, zone)
-                if not items:
-                    break
-                batch.extend(items)
-            yield from enrich_listings(self, batch, needs_detail=needs_detail)
+            batch = iter_feed_pages(
+                self.client,
+                base_url,
+                pages,
+                lambda html, dt=deal_type, zn=zone: self._parse_list(html, dt, zn),
+                stale_page_limit=stale_page_limit,
+                log_label="LUN",
+            )
+            yield from enrich_listings(
+                self, batch, needs_detail=needs_detail, max_details=max_details
+            )
 
     def parse_detail(self, html: str, listing: RawListing) -> RawListing:
         blocks = load_json_ld(html)

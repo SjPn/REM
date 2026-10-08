@@ -24,6 +24,7 @@ from app.scrapers.detail import (
 )
 from app.scrapers.enrich import enrich_listings
 from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area, parse_price
+from app.scrapers.paging import iter_feed_pages
 from app.scrapers.text_fix import clean_text, decode_js_escaped_json, fix_mojibake
 
 logger = logging.getLogger(__name__)
@@ -52,15 +53,17 @@ class OlxScraper:
         self,
         max_pages: int | None = None,
         needs_detail: Callable[[RawListing], bool] | None = None,
+        *,
+        stale_page_limit: int = 2,
+        max_details: int | None = None,
     ) -> Iterator[RawListing]:
         pages = max_pages or self.settings.crawl_max_pages
         for deal_type, bases in OLX_SEARCH.items():
-            batch: list[RawListing] = []
             html = None
             base_url = bases[0]
             for candidate in bases:
                 try:
-                    html = self.client.get_text(candidate)
+                    html = self.client.get_list_text(candidate)
                     base_url = candidate
                     break
                 except Exception as exc:  # noqa: BLE001
@@ -72,21 +75,20 @@ class OlxScraper:
                         "(CloudFront блокирует httpx) или HTTP_PROXY."
                     )
                 continue
-            for page in range(1, pages + 1):
-                url = base_url if page == 1 else f"{base_url}?page={page}"
-                logger.info("OLX fetch %s", url)
-                try:
-                    page_html = html if page == 1 else self.client.get_text(url)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("OLX page failed %s: %s", url, exc)
-                    break
-                items = self._parse_list(page_html, deal_type)
-                if not items:
-                    break
-                batch.extend(items)
+            batch = iter_feed_pages(
+                self.client,
+                base_url,
+                pages,
+                lambda page_html, dt=deal_type: self._parse_list(page_html, dt),
+                stale_page_limit=stale_page_limit,
+                log_label="OLX",
+                first_html=html,
+            )
             if batch:
                 logger.info("OLX %s: %s cards from list pages", deal_type.value, len(batch))
-            yield from enrich_listings(self, batch, needs_detail=needs_detail)
+            yield from enrich_listings(
+                self, batch, needs_detail=needs_detail, max_details=max_details
+            )
 
     def fetch_detail(self, listing: RawListing) -> RawListing:
         html = self.client.get_text(listing.url)

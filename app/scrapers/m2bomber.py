@@ -17,6 +17,7 @@ from app.scrapers.detail import (
     og_meta,
 )
 from app.scrapers.enrich import enrich_listings
+from app.scrapers.paging import iter_feed_pages
 from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area, parse_floor, parse_price
 from app.scrapers.text_fix import clean_text
 
@@ -44,26 +45,29 @@ class M2BomberScraper:
         self,
         max_pages: int | None = None,
         needs_detail: Callable[[RawListing], bool] | None = None,
+        *,
+        stale_page_limit: int = 2,
+        max_details: int | None = None,
     ) -> Iterator[RawListing]:
         pages = max_pages or self.settings.crawl_max_pages
         for deal_type, bases in M2BOMBER_SEARCH.items():
             batch: list[RawListing] = []
             for base_url in bases:
-                for page in range(1, pages + 1):
-                    url = base_url if page == 1 else f"{base_url}?page={page}"
-                    logger.info("M2Bomber fetch %s", url)
-                    try:
-                        html = self.client.get_text(url)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("M2Bomber page failed %s: %s", url, exc)
-                        break
-                    items = self._parse_list(html, deal_type)
-                    if not items:
-                        break
-                    batch.extend(items)
+                batch.extend(
+                    iter_feed_pages(
+                        self.client,
+                        base_url,
+                        pages,
+                        lambda html, dt=deal_type: self._parse_list(html, dt),
+                        stale_page_limit=stale_page_limit,
+                        log_label="M2Bomber",
+                    )
+                )
             if batch:
                 logger.info("M2Bomber %s: %s cards from list pages", deal_type.value, len(batch))
-            yield from enrich_listings(self, batch, needs_detail=needs_detail)
+            yield from enrich_listings(
+                self, batch, needs_detail=needs_detail, max_details=max_details
+            )
 
     def fetch_detail(self, listing: RawListing) -> RawListing:
         html = self.client.get_text(listing.url)

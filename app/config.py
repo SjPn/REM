@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     watch_max_pages: int = 1
     watch_max_details: int = 25
     watch_apply_vanish: bool = False
+    # Ежедневный лёгкий сбор: верх выдачи, без vanish.
+    light_max_pages: int = 6
+    light_max_details: int = 30
+    # Стоп ленты после стольких страниц подряд без новых id (лёгкий день).
+    light_stale_pages: int = 1
+    light_list_delay_sec: float = 1.2
 
     # FX for UAH/EUR → USD (NBU-ish; update periodically). 2026-08-21: 44.61 грн/$, 52.13 грн/€.
     uah_per_usd: float = 44.61

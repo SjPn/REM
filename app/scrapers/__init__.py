@@ -32,9 +32,17 @@ def crawl_source(
     max_pages: int | None = None,
     client: HttpClient | None = None,
     needs_detail: Callable[[RawListing], bool] | None = None,
+    *,
+    stale_page_limit: int = 2,
+    max_details: int | None = None,
 ) -> Iterator[RawListing]:
     scraper = get_scraper(name, client=client)
-    yield from scraper.crawl(max_pages=max_pages, needs_detail=needs_detail)
+    yield from scraper.crawl(
+        max_pages=max_pages,
+        needs_detail=needs_detail,
+        stale_page_limit=stale_page_limit,
+        max_details=max_details,
+    )
 
 
 def crawl_all(max_pages: int | None = None) -> Iterator[tuple[str, RawListing]]:

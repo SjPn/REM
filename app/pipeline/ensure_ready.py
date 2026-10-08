@@ -129,6 +129,36 @@ def snapshot_readiness(
     )
 
 
+def next_fill_pages(
+    *,
+    pages: int,
+    seen: int,
+    prev_seen: int | None,
+    ratio: float | None,
+    target: float,
+    page_ceiling: int,
+) -> tuple[int | None, str | None]:
+    """Следующая глубина ленты. None — дальше листать не нужно.
+
+    Глубину поднимаем только когда уникальных id стало больше.
+    Иначе добор страниц качает ту же выдачу заново.
+    """
+    if prev_seen is not None and int(seen) <= int(prev_seen):
+        return None, "seen_plateau"
+    if pages >= page_ceiling:
+        return None, "page_ceiling"
+    ratio_v = float(ratio or 0.0)
+    if ratio_v <= 0.01:
+        nxt = min(page_ceiling, max(pages * 2, pages + 10))
+    else:
+        nxt = int(pages * (target / max(ratio_v, 0.05)) * 1.15)
+        nxt = max(pages + 10, nxt)
+    nxt = min(page_ceiling, nxt)
+    if nxt <= pages:
+        return None, "no_page_growth"
+    return nxt, None
+
+
 def _fill_source_until_ready(
     db: Session,
     source: str,
@@ -143,6 +173,7 @@ def _fill_source_until_ready(
     pages = backfill_pages_for_source(source)
     history: list[dict[str, Any]] = []
     rounds = 0
+    prev_seen: int | None = None
 
     while rounds < max_rounds:
         rounds += 1
@@ -210,30 +241,23 @@ def _fill_source_until_ready(
                 "history": history,
             }
 
-        if pages >= page_ceiling:
+        seen_now = int(cov.last_seen or 0)
+        nxt, stuck = next_fill_pages(
+            pages=pages,
+            seen=seen_now,
+            prev_seen=prev_seen,
+            ratio=cov.ratio,
+            target=target,
+            page_ceiling=page_ceiling,
+        )
+        prev_seen = seen_now
+        if nxt is None:
             return {
                 "source": source,
                 "ok": False,
                 "pages": pages,
                 "history": history,
-                "stuck": "page_ceiling",
-                "reason": cov.vanish_reason,
-            }
-
-        ratio = cov.ratio or 0.0
-        if ratio <= 0.01:
-            nxt = min(page_ceiling, max(pages * 2, pages + 10))
-        else:
-            nxt = int(pages * (target / max(ratio, 0.05)) * 1.15)
-            nxt = max(pages + 10, nxt)
-        nxt = min(page_ceiling, nxt)
-        if nxt <= pages:
-            return {
-                "source": source,
-                "ok": False,
-                "pages": pages,
-                "history": history,
-                "stuck": "no_page_growth",
+                "stuck": stuck,
                 "reason": cov.vanish_reason,
             }
         pages = nxt

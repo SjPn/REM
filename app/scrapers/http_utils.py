@@ -199,8 +199,9 @@ def _origin(url: str) -> str:
 class HttpClient:
     """Persistent browser-like session: cookies, Referer, paced GETs."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, list_fast: bool = False) -> None:
         settings = get_settings()
+        self.list_fast = bool(list_fast)
         self.timeout = settings.http_timeout_sec
         self.verify = settings.http_verify_ssl
         self.proxy = _normalize_proxy(settings.http_proxy)
@@ -298,7 +299,23 @@ class HttpClient:
         finally:
             _pace_state["warmed"].add(host)
 
-    def _pace(self, url: str) -> None:
+    def _fast_gap(self, url: str) -> None:
+        """Короткий интервал для страниц списка. Карточки и OLX сюда не попадают."""
+        settings = get_settings()
+        host = self._host(url)
+        if not host:
+            return
+        need = max(0.4, float(settings.light_list_delay_sec))
+        last = float(_pace_state["host_last"].get(host) or 0.0)
+        if last > 0:
+            elapsed = time.monotonic() - last
+            if elapsed < need:
+                time.sleep(need - elapsed + random.uniform(0.05, 0.25))
+
+    def _pace(self, url: str, *, pace: str | None = None) -> None:
+        if pace == "fast" and not self._use_tls_impersonate(url):
+            self._fast_gap(url)
+            return
         self._warmup_host(url)
         if not self.human_mode:
             sleep_crawl_delay()
@@ -388,14 +405,19 @@ class HttpClient:
             sleep_crawl_delay(blocked=True)
             raise PortalBlockedError(403, url)
 
+    def get_list_text(self, url: str, params: dict[str, Any] | None = None) -> str:
+        """Страница списка. В лёгком дне — короткий интервал; OLX остаётся медленным."""
+        pace = "fast" if self.list_fast else None
+        return self.get_text(url, params=params, pace=pace)
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=3, max=45),
         retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
         reraise=True,
     )
-    def get_text(self, url: str, params: dict[str, Any] | None = None) -> str:
-        self._pace(url)
+    def get_text(self, url: str, params: dict[str, Any] | None = None, *, pace: str | None = None) -> str:
+        self._pace(url, pace=pace)
         headers = self._request_headers(url)
         try:
             if self._use_tls_impersonate(url):

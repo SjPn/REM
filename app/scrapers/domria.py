@@ -24,6 +24,7 @@ from app.scrapers.detail import (
     postal_address_to_str,
 )
 from app.scrapers.enrich import enrich_listings
+from app.scrapers.paging import iter_feed_pages
 from app.scrapers.http_utils import (
     HttpClient,
     guess_property_type,
@@ -60,6 +61,9 @@ class DomriaScraper:
         self,
         max_pages: int | None = None,
         needs_detail: Callable[[RawListing], bool] | None = None,
+        *,
+        stale_page_limit: int = 2,
+        max_details: int | None = None,
     ) -> Iterator[RawListing]:
         pages = max_pages or self.settings.crawl_max_pages
         deal_items = list(DOMRIA_SEARCH.items())
@@ -71,19 +75,19 @@ class DomriaScraper:
             if self.settings.crawl_human_mode:
                 random.shuffle(urls)
             for base_url in urls:
-                for page in range(1, pages + 1):
-                    url = base_url if page == 1 else f"{base_url}?page={page}"
-                    logger.info("DOM.RIA fetch %s", url)
-                    try:
-                        html = self.client.get_text(url)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("DOM.RIA page failed %s: %s", url, exc)
-                        break
-                    items = self._parse_list(html, deal_type)
-                    if not items:
-                        break
-                    batch.extend(items)
-            yield from enrich_listings(self, batch, needs_detail=needs_detail)
+                batch.extend(
+                    iter_feed_pages(
+                        self.client,
+                        base_url,
+                        pages,
+                        lambda html, dt=deal_type: self._parse_list(html, dt),
+                        stale_page_limit=stale_page_limit,
+                        log_label="DOM.RIA",
+                    )
+                )
+            yield from enrich_listings(
+                self, batch, needs_detail=needs_detail, max_details=max_details
+            )
 
     def fetch_detail(self, listing: RawListing) -> RawListing:
         html = self.client.get_text(listing.url)
