@@ -52,6 +52,14 @@ def test_classify_probe_body_statuses():
     assert classify_probe_body(200, "<html>об'єкт продано</html>") == "sold"
     assert classify_probe_body(200, "<html>оголошення здано в оренду</html>") == "rented"
     assert classify_probe_body(200, "<html>оголошення видалено</html>") == "removed"
+    assert (
+        classify_probe_body(
+            200,
+            '<html><meta property="og:title" content="Офис">'
+            "оголошення неактуальне чи інформація неточна?</html>",
+        )
+        == "alive"
+    )
     assert classify_probe_body(200, ALIVE_HTML) == "alive"
     assert classify_probe_body(200, "<html>just a moment</html>") == "blocked"
     assert classify_probe_body(200, "<html><body>hello</body></html>") == "skip"

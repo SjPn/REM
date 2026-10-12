@@ -53,6 +53,19 @@ def test_domria_detail_enrichment():
     assert detailed.address_raw and "Бажана" in detailed.address_raw
 
 
+def test_portal_chrome_is_not_a_listing_status():
+    question = "<div>оголошення неактуальне чи інформація неточна?</div>"
+    report = '<div class="report_reason" data-title="оголошення неактуальне"></div>'
+    complaints = '{"1":"оголошення неактуальне","2":"неправильні контактні дані"}'
+    built = "<span>будинків здано</span><span>167</span>"
+    assert detect_listing_status(question) is None
+    assert detect_listing_status(report) is None
+    assert detect_listing_status(complaints) is None
+    assert detect_listing_status(built) is None
+    assert detect_listing_status("<h1>оголошення неактуальне</h1>") == "inactive"
+    assert detect_listing_status("<div>здано в оренду</div>") == "rented"
+
+
 def test_detect_sold_status():
     html = (FIXTURES / "status_sold.html").read_text(encoding="utf-8")
     assert detect_listing_status(html) == "sold"

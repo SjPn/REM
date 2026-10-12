@@ -121,6 +121,28 @@ def extract_phones(html: str) -> list[str]:
     return normalized
 
 
+_CHROME_AROUND_INACTIVE = (
+    "чи інформація",
+    "или информация",
+    "report_reason",
+    "complain",
+    "контактні дані",
+    "контактные данные",
+    "неправдивий опис",
+    "шахрайств",
+)
+
+
+def _inactive_phrase_outside_chrome(text: str) -> bool:
+    """Жалоба «оголошення неактуальне» на живой карточке — не снятие."""
+    for match in re.finditer(r"(оголошення неактуальне|объявление неактуально)", text):
+        window = text[max(0, match.start() - 160) : match.end() + 100]
+        if any(part in window for part in _CHROME_AROUND_INACTIVE):
+            continue
+        return True
+    return False
+
+
 def detect_listing_status(html: str, json_ld: list[Any] | None = None) -> str | None:
     """Return raw status label if listing looks sold/rented/inactive."""
     text = html.lower()
@@ -141,17 +163,17 @@ def detect_listing_status(html: str, json_ld: list[Any] | None = None) -> str | 
     # Strong textual markers first
     if re.search(r"\b(продано|об.?єкт продано|объект продан|was sold)\b", text):
         return "sold"
-    if re.search(r"\b(здано|здано в оренду|орендовано|арендовано|rented|leased)\b", text):
+    # Голое «здано» есть в «будинків здано» — это сданные дома, не статус объявления.
+    if re.search(r"(здано в оренду|орендовано|арендовано|\brented\b|\bleased\b)", text):
         return "rented"
 
-    # Soft-404 from LUN Next payload / explicit inactive copy
+    # Soft-404 from LUN Next payload / explicit inactive copy.
+    # «оголошення неактуальне» на DOM.RIA и Rieltor — пункт жалобы на живой карточке.
     if '"statuscode":404' in text.replace(" ", "") or '"statusCode":404' in html:
         return "inactive_404"
-    if re.search(
-        r"(оголошення неактуальне|объявление неактуально|знято з публікації|"
-        r"оголошення видалено|объявление удалено)",
-        text,
-    ):
+    if re.search(r"(знято з публікації|оголошення видалено|объявление удалено)", text):
+        return "inactive"
+    if _inactive_phrase_outside_chrome(text):
         return "inactive"
 
     for block in blocks:
