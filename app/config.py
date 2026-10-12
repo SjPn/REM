@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     # Стоп ленты после стольких страниц подряд без новых id (лёгкий день).
     light_stale_pages: int = 1
     light_list_delay_sec: float = 1.2
+    # probe-day: голова ленты + прямые проверки карточек, общий лимит прогона.
+    probe_day_minutes: int = 40
+    probe_head_pages: int = 8
+    probe_head_details: int = 30
+    probe_stale_pages: int = 2
+    probe_delay_sec: float = 2.0
+    probe_olx_delay_sec: float = 3.5
 
     # FX for UAH/EUR → USD (NBU-ish; update periodically). 2026-08-21: 44.61 грн/$, 52.13 грн/€.
     uah_per_usd: float = 44.61

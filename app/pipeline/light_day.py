@@ -76,6 +76,7 @@ def run_light_day(
     max_pages: int | None = None,
     max_details: int | None = None,
     stale_page_limit: int | None = None,
+    include_ids: bool = False,
 ) -> dict:
     """Пять площадок параллельно, первые страницы, детали только у новых и изменённых."""
     settings = get_settings()
@@ -143,6 +144,10 @@ def run_light_day(
             "skipped_irrelevant": int(stats.get("skipped_irrelevant", 0)),
             "snapshots_skipped": int(stats.get("snapshots_skipped", 0)),
         }
+        if include_ids:
+            summary["sources"][source]["external_ids"] = sorted(
+                {item.external_id for item in items if item.external_id}
+            )
     try:
         snap = record_market_snapshot(db, force=True)
         summary["market_snapshot_day"] = snap.day

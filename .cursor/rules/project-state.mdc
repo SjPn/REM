@@ -13,7 +13,7 @@ alwaysApply: true
 
 ## Операции сейчас
 
-- Дневной чеклист (правило daily-update): `light-day`, не полный `ensure-ready`. Сверка сделок — редкий `ensure-ready`.
+- Дневной чеклист (правило daily-update): `probe-day` (до 40 минут), не полный `ensure-ready`. `light-day` — только верх ленты. Глубокая сверка ленты — редкий `ensure-ready`.
 - Порталы primary: lun, olx, domria, rieltor, m2bomber. Coverage цель **5/5**.
 - OLX — узкое место (таймауты, fill до page-ceiling). Не параллелить второй crawl.
 - UI: `http://127.0.0.1:8000`, health `/api/health`. Remote: `https://github.com/SjPn/REM.git`.

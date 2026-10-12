@@ -316,7 +316,25 @@ class HttpClient:
             if elapsed < need:
                 time.sleep(need - elapsed + random.uniform(0.05, 0.25))
 
+    def _probe_gap(self, url: str) -> None:
+        """Короткий интервал для уже известного URL. Без кофе-пауз."""
+        settings = get_settings()
+        host = self._host(url)
+        if not host:
+            return
+        need = max(0.8, float(settings.probe_delay_sec))
+        if self._use_tls_impersonate(url):
+            need = max(need, float(settings.probe_olx_delay_sec))
+        last = float(_pace_state["host_last"].get(host) or 0.0)
+        if last > 0:
+            elapsed = time.monotonic() - last
+            if elapsed < need:
+                time.sleep(need - elapsed + random.uniform(0.02, 0.15))
+
     def _pace(self, url: str, *, pace: str | None = None) -> None:
+        if pace == "probe":
+            self._probe_gap(url)
+            return
         if pace == "fast" and not self._use_tls_impersonate(url):
             self._fast_gap(url)
             return
@@ -413,6 +431,54 @@ class HttpClient:
         """Страница списка. В лёгком дне — короткий интервал; OLX остаётся медленным."""
         pace = "fast" if self.list_fast else None
         return self.get_text(url, params=params, pace=pace)
+
+    def probe_url(self, url: str) -> tuple[int, str]:
+        """Один GET карточки без ретраев. 404 и 410 — ответ, не сбой сети.
+
+        403/429/503 и страница блокировки поднимают PortalBlockedError без длинной паузы:
+        вызывающий останавливает площадку на этот прогон.
+        """
+        self._pace(url, pace="probe")
+        headers = self._request_headers(url)
+        try:
+            if self._use_tls_impersonate(url):
+                code, text = self._probe_via_curl_cffi(url, headers)
+            else:
+                resp = self._client.get(url, headers=headers)
+                code = int(resp.status_code)
+                text = resp.text or ""
+            if len(text) > 1_500_000:
+                text = text[:1_500_000]
+            if code in (403, 429, 503) or looks_like_block_page(text):
+                self._mark_host_fail(url)
+                raise PortalBlockedError(403 if code == 200 else code, url)
+            if code in (200, 404, 410):
+                self._mark_host_ok(url)
+                self._last_url = url.split("?")[0]
+                return code, text
+            self._mark_host_fail(url)
+            return code, ""
+        except PortalBlockedError:
+            raise
+        except Exception:
+            self._mark_host_fail(url)
+            raise
+
+    def _probe_via_curl_cffi(self, url: str, headers: dict[str, str]) -> tuple[int, str]:
+        from curl_cffi import requests as cffi_requests
+
+        hdrs = dict(headers)
+        hdrs.pop("Accept-Encoding", None)
+        kwargs: dict[str, Any] = {
+            "impersonate": self.tls_impersonate,
+            "timeout": self.timeout,
+            "verify": self.verify,
+            "allow_redirects": True,
+        }
+        if self.proxy:
+            kwargs["proxies"] = {"http": self.proxy, "https": self.proxy}
+        resp = cffi_requests.get(url, headers=hdrs, **kwargs)
+        return int(resp.status_code), resp.text or ""
 
     @retry(
         stop=stop_after_attempt(3),

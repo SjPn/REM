@@ -455,6 +455,37 @@ def light_day_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command("probe-day")
+def probe_day_cmd(
+    sources: Optional[str] = typer.Option(
+        None, help="Comma list; default all scrapers"
+    ),
+    minutes: Optional[int] = typer.Option(
+        None, min=5, max=120, help="Лимит всего прогона в минутах (по умолчанию 40)"
+    ),
+) -> None:
+    """Голова лент и прямая проверка старых карточек. Останавливается сам.
+
+    Новые и уценки с верха выдачи — в этом прогоне. Снятие становится
+    гипотезой сделки после двух подтверждений в разные дни. Не запускать
+    параллельно с ensure-ready или вторым crawl.
+    """
+    import json
+
+    from app.pipeline.probe_day import run_probe_day
+
+    init_db()
+    src_list = (
+        [s.strip() for s in sources.split(",") if s.strip()] if sources else None
+    )
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        report = run_probe_day(db, sources=src_list, minutes=minutes)
+    print(json.dumps(report, ensure_ascii=True, indent=2, default=str))
+    if not report.get("ok"):
+        raise typer.Exit(code=1)
+
+
 @app.command("clean-junk")
 def clean_junk() -> None:
     """Remove non-Kyiv URLs and nonsensical prices (inf / absurd)."""
