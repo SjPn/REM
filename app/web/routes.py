@@ -30,6 +30,7 @@ from app.domain.market_stats import (
 )
 from app.domain.deals_preview import deal_bucket_counts, recent_deal_hypotheses
 from app.domain.pricing import effective_listing_psm_usd, sanitize_price_per_sqm
+from app.domain.selection_stats import selection_price_stats
 from app.domain.ttl_cache import cache_clear
 from app.domain.search import listing_text_search_filter, search_relevance_tier
 from app.domain.seller_stress import compute_seller_stress
@@ -1106,6 +1107,7 @@ def dashboard(
         else:
             candidates = _sort_listings_in_memory(candidates, sort, q=q)
         total = len(candidates)
+        selection_stats = selection_price_stats(candidates)
         pages = max(1, (total + per_page - 1) // per_page)
         page = min(page, pages)
         offset = (page - 1) * per_page
@@ -1120,6 +1122,16 @@ def dashboard(
         total = (
             db.scalar(select(func.count()).select_from(rep_subq)) or 0
         )
+        price_rows = db.execute(
+            select(
+                Listing.price,
+                Listing.currency,
+                Listing.area_sqm,
+                Listing.deal_type,
+                Listing.price_per_sqm,
+            ).join(rep_subq, Listing.id == rep_subq.c.listing_id)
+        ).all()
+        selection_stats = selection_price_stats(price_rows)
         pages = max(1, (total + per_page - 1) // per_page)
         page = min(page, pages)
         offset = (page - 1) * per_page
@@ -1201,6 +1213,7 @@ def dashboard(
             "signals": signals,
             "listings": listings,
             "total": total,
+            "selection_stats": selection_stats,
             "page": page,
             "pages": pages,
             "per_page": per_page,

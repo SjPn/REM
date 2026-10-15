@@ -39,6 +39,14 @@ def test_health_and_demo_seed():
     assert "медиана" in client.get("/").text.lower()
 
 
+def test_dashboard_shows_selection_price_stats():
+    client = TestClient(app)
+    client.post("/api/demo/seed")
+    html = client.get("/?deal_type=sale").text
+    assert "По этой выборке" in html
+    assert "средняя" in html
+
+
 def test_dashboard_empty_price_query_ok():
     """HTML forms submit price_min=&area_min= — must not 422."""
     client = TestClient(app)

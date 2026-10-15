@@ -255,6 +255,23 @@
     </aside>
 
     <section class="catalog-main">
+      {% if selection_stats and selection_stats.priced %}
+      <div class="selection-stats" aria-label="Цены по текущей выборке">
+        <span class="sel-title">По этой выборке</span>
+        <span><span class="sel-k">медиана</span><strong>{{ fmt_price(selection_stats.median_usd, 'USD') }}</strong></span>
+        <span><span class="sel-k">средняя</span><strong>{{ fmt_price(selection_stats.avg_usd, 'USD') }}</strong></span>
+        {% if selection_stats.median_psm %}
+        <span><span class="sel-k">медиана</span><strong>{{ fmt_psm(selection_stats.median_psm, deal_type) }}</strong></span>
+        <span><span class="sel-k">средняя</span><strong>{{ fmt_psm(selection_stats.avg_psm, deal_type) }}</strong></span>
+        {% endif %}
+        <span class="muted">
+          {% if deal_type == 'rent' %}цена в месяц · {% endif %}
+          {{ selection_stats.priced }} с ценой
+          {% if selection_stats.priced != total %}из {{ total }}{% endif %}
+        </span>
+      </div>
+      {% endif %}
+
       <div class="section-head">
         <h2>Список</h2>
         <span class="muted">
