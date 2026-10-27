@@ -20,6 +20,29 @@ def test_parse_price_spaced_thousands_not_partial():
     assert price2 == 5300
 
 
+def test_parse_price_ignores_day_and_neighbor_after_dollar():
+    """m2bomber: «223 000 $ 19 вер.» is 223000, not the day 19."""
+    blob = (
+        "Продаж офісу 163.1 кв. м. "
+        "223 000 $ ₴ $ € 1 368 $\n                        за м² "
+        "зміна ціни 4 жовт. 2026 - 223 000 $ 19 вер. 2026 - 225 000 $ "
+        "15 000 $ 57 м² сусід "
+        "32 637 000 ₴ ЖК"
+    )
+    price, cur = parse_price(blob)
+    assert cur == "USD"
+    assert price == 223_000
+    psm, psm_cur = parse_price_per_sqm(blob)
+    assert psm == 1368
+    assert psm_cur == "USD"
+
+
+def test_parse_price_keeps_amount_before_dollar():
+    price, cur = parse_price("15 000 $ 57 м²")
+    assert cur == "USD"
+    assert price == 15_000
+
+
 def test_parse_price_skips_per_sqm_chip():
     price, cur = parse_price("3 181 860 $ 495 $/м² Куренівський пров.")
     assert cur == "USD"

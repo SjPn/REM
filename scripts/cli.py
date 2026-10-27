@@ -1059,6 +1059,24 @@ def repair_spaced_prices_cmd(
     rprint(summary)
 
 
+@app.command("repair-dollar-suffix-prices")
+def repair_dollar_suffix_prices_cmd(
+    apply: bool = typer.Option(
+        False, "--apply", help="Записать исправленные цены в БД"
+    ),
+) -> None:
+    """Починить продажу, где после «$» взяли день даты или площадь соседней карточки."""
+    from app.domain.repair_dollar_suffix import repair_dollar_suffix_prices
+    from app.domain.ttl_cache import cache_clear
+
+    init_db()
+    SessionLocal = get_session_factory()
+    with SessionLocal() as db:
+        summary = repair_dollar_suffix_prices(db, dry_run=not apply)
+    cache_clear()
+    rprint(summary)
+
+
 @app.command("fix-mojibake")
 def fix_mojibake_cmd(
     source: Optional[str] = typer.Option("olx", help="Источник (по умолчанию olx)"),

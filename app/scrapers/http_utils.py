@@ -533,22 +533,47 @@ class HttpClient:
 
 
 
+# After a total, m2bomber puts the next line's day («$ 19 вер.») or the next
+# card's area («$ 57 м²»). That is not a second price.
+_PRICE_TAIL_NOISE = re.compile(
+    r"[\s\u00a0]{0,64}(?:"
+    r"/\s*м(?:²|2)\b|/\s*m2\b|/\s*sqm\b|за\s*м(?:²|2)\b|"
+    r"(?:м(?:²|2)|кв\.?\s*м)\b|"
+    r"(?:січня|лютого|березня|квітня|травня|червня|липня|серпня|вересня|"
+    r"жовтня|листопада|грудня|січ|лют|бер|квіт|трав|черв|лип|серп|вер|жовт|"
+    r"лист|груд|января|февраля|марта|апреля|мая|июня|июля|августа|сентября|"
+    r"октября|ноября|декабря|янв|фев|мар|апр|июн|июл|авг|сен|окт|ноя|дек)\.?\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _currency_closes_previous_amount(text: str, pos: int) -> bool:
+    """True when `$` / USD already ends the previous number (`223 000 $ 19`)."""
+    j = pos - 1
+    while j >= 0 and text[j] in " \u00a0\n\r\t":
+        j -= 1
+    return j >= 0 and text[j].isdigit()
+
+
 def _collect_price_candidates(text: str) -> list[tuple[float, str, int, int]]:
     """All currency-total matches (overlapping), excluding $/м² rates."""
     patterns = [
-        (r"(?:USD|\$|дол(?:\.|арі|ларов)?)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "USD"),
-        (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:USD|\$|дол)", "USD"),
-        (r"(?:EUR|€|євро)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "EUR"),
-        (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:EUR|€|євро)", "EUR"),
-        (r"(?:UAH|₴|грн)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "UAH"),
-        (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:UAH|₴|грн)", "UAH"),
+        (r"(?:USD|\$|дол(?:\.|арі|ларов)?)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "USD", True),
+        (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:USD|\$|дол)", "USD", False),
+        (r"(?:EUR|€|євро)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "EUR", True),
+        (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:EUR|€|євро)", "EUR", False),
+        (r"(?:UAH|₴|грн)\s*[:\s]*(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)", "UAH", True),
+        (r"(\d{1,3}(?:[ \u00a0]?\d{3})+|\d+(?:[.,]\d+)?)\s*(?:UAH|₴|грн)", "UAH", False),
     ]
     candidates: list[tuple[float, str, int, int]] = []
     seen: set[tuple[float, str]] = set()
-    for pat, cur in patterns:
+    for pat, cur, currency_first in patterns:
         for i in range(len(text)):
             m = re.match(pat, text[i:], flags=re.IGNORECASE)
             if not m:
+                continue
+            if currency_first and _currency_closes_previous_amount(text, i):
                 continue
             # Avoid substring numbers glued inside a larger amount ("5 000" inside "295 000 $").
             num_start = i + m.start(1)
@@ -566,12 +591,8 @@ def _collect_price_candidates(text: str) -> list[tuple[float, str, int, int]]:
                     j -= 1
                 if j >= 0 and text[j].isdigit():
                     continue
-            tail = text[i + m.end() : i + m.end() + 12]
-            if re.match(
-                r"\s*/\s*м(?:²|2)|\s*/\s*m2|\s*/\s*sqm|\s*за\s*м(?:²|2)",
-                tail,
-                flags=re.IGNORECASE,
-            ):
+            tail = text[i + m.end() : i + m.end() + 80]
+            if _PRICE_TAIL_NOISE.match(tail):
                 continue
             value = _to_price_number(m.group(1))
             if value is None:
@@ -640,10 +661,14 @@ def _resolve_price_candidates(
             return best[0], best[1]
 
     if usd and uah:
-        pool = sorted(usd, key=lambda x: x[0])
-        if len(pool) > 1 and pool[-1][0] > pool[0][0] * 8:
-            return pool[0][0], pool[0][1]
-        return max(usd, key=lambda x: x[0])[0], max(usd, key=lambda x: x[0])[1]
+        pool = [c for c in usd if c[0] >= 1000] or list(usd)
+        ordered = sorted(pool, key=lambda x: x[0])
+        if len(ordered) > 1 and ordered[-1][0] > ordered[0][0] * 8:
+            # Первая сумма на карточке — цена объекта. Самая маленькая часто
+            # чужая (сосед, день даты после «$»).
+            earliest = min(pool, key=lambda c: (c[2], -c[3]))
+            return earliest[0], earliest[1]
+        return max(pool, key=lambda x: x[0])[0], max(pool, key=lambda x: x[0])[1]
 
     if len(usd) > 1:
         pool = sorted(usd, key=lambda x: x[0])
@@ -704,7 +729,7 @@ def parse_price_per_sqm(text: str | None) -> tuple[float | None, str | None]:
         return None, None
     m = re.search(
         r"(\d{1,3}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*"
-        r"(USD|\$|UAH|₴|грн|EUR|€)?\s*/\s*м(?:²|2)\b",
+        r"(USD|\$|UAH|₴|грн|EUR|€)?\s*(?:/\s*м(?:²|2)|за\s*м(?:²|2))\b",
         text,
         flags=re.IGNORECASE,
     )

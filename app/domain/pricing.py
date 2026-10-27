@@ -19,7 +19,7 @@ _SALE_PSM_MAX_USD = 10_000.0
 
 _EXPLICIT_PSM_RE = re.compile(
     r"(\d{1,3}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*"
-    r"(?:USD|\$|UAH|₴|грн|EUR|€)?\s*/\s*м(?:²|2)\b",
+    r"(?:USD|\$|UAH|₴|грн|EUR|€)?\s*(?:/\s*м(?:²|2)|за\s*м(?:²|2))\b",
     re.IGNORECASE,
 )
 
