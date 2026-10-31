@@ -29,9 +29,13 @@ def test_parse_address_search_query_street_and_house():
 def test_text_has_house_number_variants():
     assert text_has_house_number("вул. Саксаганського, 70А", "70")
     assert text_has_house_number("Саксаганського 70/1", "70")
+    assert text_has_house_number("Саксаганського 70-б", "70")
+    assert text_has_house_number("Саксаганського 70а/2", "70")
     assert not text_has_house_number("Саксаганського, 40/85", "70")
     assert not text_has_house_number("Саксаганського 121", "70")
     assert not text_has_house_number("буд. 700", "70")
+    assert not text_has_house_number("Саксаганського 78-80", "70")
+    assert not text_has_house_number("Саксаганського 70б", "70а")
 
 
 def test_search_relevance_tier_street_then_house():
@@ -57,6 +61,13 @@ def test_search_relevance_tier_street_then_house():
     assert search_relevance_tier(hit, q) == 2
     assert search_relevance_tier(other, q) == 1
     assert search_relevance_tier(far, q) == 0
+    russian = SimpleNamespace(
+        title="Офісні приміщення, продаж, Київ",
+        address_raw="Киев, Саксаганского улица, 70А",
+        district="Черепанова",
+        city="Київ",
+    )
+    assert search_relevance_tier(russian, q) == 2
 
 
 def test_listing_text_search_filter_matches_ukrainian_address(tmp_path, monkeypatch):

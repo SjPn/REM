@@ -38,6 +38,15 @@ def _unify_cyrillic(text: str) -> str:
     return out
 
 
+def _fold_match_text(text: str) -> str:
+    """Lowercase, one Cyrillic variant, no soft sign.
+
+    «саксаганського» and «Саксаганского» then share the same stem.
+    """
+    folded = _unify_cyrillic(normalize_text(text))
+    return folded.replace("ь", "").replace("ъ", "").replace("'", "")
+
+
 @dataclass(frozen=True)
 class AddressSearchQuery:
     raw: str
@@ -74,8 +83,11 @@ def text_has_house_number(text: str | None, house: str) -> bool:
     elif letter:
         pat = rf"(?<!\d){re.escape(main)}[-\s]?{re.escape(letter)}(?!\d)"
     else:
-        # Exact number with optional flat suffix letter or /wing.
-        pat = rf"(?<!\d){re.escape(main)}(?:/\d{{1,4}})?[-\s]?[а-яіїєґa-z]?(?!\d)"
+        # 70 also matches 70А, 70-б, 70/1, 70а/2. Not 700 and not 78.
+        pat = (
+            rf"(?<!\d){re.escape(main)}"
+            rf"(?:[-\s]?[а-яіїєґa-z])?(?:/\d{{1,4}})?(?!\d)"
+        )
     return bool(re.search(pat, text, re.IGNORECASE | re.UNICODE))
 
 
@@ -93,8 +105,8 @@ def _listing_search_blob(listing: Listing) -> str:
 
 
 def _street_matches_blob(street: str, blob: str) -> bool:
-    street_n = _unify_cyrillic(normalize_text(street))
-    blob_n = _unify_cyrillic(normalize_text(blob))
+    street_n = _fold_match_text(street)
+    blob_n = _fold_match_text(blob)
     if not street_n or not blob_n:
         return False
     if street_n in blob_n:
@@ -134,6 +146,9 @@ def search_query_variants(q: str, *, limit: int = 64) -> list[str]:
     seed_text = parsed.street if parsed and parsed.house else raw
 
     seeds: set[str] = {raw, seed_text}
+    folded = _fold_match_text(seed_text)
+    if folded:
+        seeds.add(folded)
     norm = _unify_cyrillic(normalize_text(seed_text))
     if norm:
         seeds.add(norm)

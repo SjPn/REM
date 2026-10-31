@@ -36,6 +36,32 @@ from app.scrapers.http_utils import (
 
 logger = logging.getLogger(__name__)
 
+_STREET_HINT = re.compile(r"вул|улиц|просп|бульв|пров", re.IGNORECASE)
+_HOUSE_TOKEN = re.compile(
+    r"(?<!\d)\d{1,4}(?:/\d{1,4})?[-\s]?[а-яіїєґa-z]?(?!\d)",
+    re.IGNORECASE,
+)
+
+
+def _best_listing_title(*candidates: str | None) -> str | None:
+    """Prefer the heading that contains the street and the building number."""
+    texts: list[str] = []
+    for raw in candidates:
+        if not raw:
+            continue
+        text = " ".join(str(raw).split())
+        if len(text) >= 8:
+            texts.append(text[:500])
+    if not texts:
+        return None
+
+    def rank(text: str) -> tuple[int, int, int]:
+        has_street = bool(_STREET_HINT.search(text))
+        has_house = bool(_HOUSE_TOKEN.search(text))
+        return (1 if has_street and has_house else 0, 1 if has_street else 0, len(text))
+
+    return max(texts, key=rank)
+
 # City-scoped feeds — unscoped /prodazha-ofisov/ mixes all Ukraine and mostly
 # non-Kyiv cards, so the old parser returned almost nothing useful.
 DOMRIA_SEARCH = {
@@ -95,7 +121,10 @@ class DomriaScraper:
 
     def parse_detail(self, html: str, listing: RawListing) -> RawListing:
         blocks = load_json_ld(html)
-        title = og_meta(html, "og:title") or listing.title
+        soup = BeautifulSoup(html, "lxml")
+        h1 = soup.find("h1")
+        h1_text = h1.get_text(" ", strip=True) if h1 else None
+        title_candidates = [h1_text, og_meta(html, "og:title"), listing.title]
         description = None
         phones = extract_phones(html)
         status = detect_listing_status(html, blocks)
@@ -110,7 +139,7 @@ class DomriaScraper:
 
         for block in iter_json_ld_types(blocks, "Product", "LocalBusiness"):
             if block.get("name"):
-                title = str(block["name"])[:500]
+                title_candidates.append(str(block["name"]))
             if block.get("description"):
                 description = str(block["description"])
             if block.get("address"):
@@ -149,6 +178,7 @@ class DomriaScraper:
                     area = area or area2
                     floor = floor if floor is not None else floor2
 
+        title = _best_listing_title(*title_candidates)
         area2, floor2 = extract_floor_area_from_text(title, description)
         area = area or area2
         floor = floor if floor is not None else floor2

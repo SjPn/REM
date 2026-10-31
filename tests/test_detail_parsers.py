@@ -36,6 +36,31 @@ def test_lun_detail_phone_and_district():
     assert detailed.district == "Дарницький"
 
 
+def test_domria_detail_keeps_street_number_from_heading():
+    html = """
+    <html><head>
+      <meta property="og:title" content="Офісні приміщення, продаж, Київ" />
+    </head><body>
+      <h1>Продаж офісного приміщення 1000 кв.м. на вул. Саксаганського 70А • ID 34051398</h1>
+      <script type="application/ld+json">
+      {"@type":"Product","name":"Офісні приміщення, продаж, Київ",
+       "offers":{"@type":"Offer","price":"2328000","priceCurrency":"USD"}}
+      </script>
+    </body></html>
+    """
+    base = RawListing(
+        source="domria",
+        external_id="34051398",
+        url="https://dom.ria.com/uk/realty-x-34051398.html",
+        deal_type="sale",
+        title="Офісні приміщення, продаж, Київ",
+        address_raw="Киев, Саксаганского улица",
+    )
+    detailed = DomriaScraper().parse_detail(html, base)
+    assert detailed.title and "70А" in detailed.title
+    assert "Саксаганського" in detailed.title
+
+
 def test_domria_detail_enrichment():
     html = (FIXTURES / "domria_detail.html").read_text(encoding="utf-8")
     base = RawListing(
