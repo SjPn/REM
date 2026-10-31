@@ -43,6 +43,21 @@ def test_parse_price_keeps_amount_before_dollar():
     assert price == 15_000
 
 
+def test_parse_price_m2_rent_ignores_nearby_house_numbers():
+    """«73-79 100 900 ₴» is not 79 million; the card total is the first sum."""
+    blob = (
+        "Оренда офісу на вул. Саксаганського 70А 1 093 675 ₴ 970 м² "
+        "зміна ціни 9 жовт. 2026 - 1 093 675 ₴ 24 вер. 2026 - 1 094 888 ₴ "
+        "ЖК Stanford ул. Предславинская, 35 371 400 ₴ "
+        "ЖК CITY HUB ул. Кудряшова, 8-10 330 890 ₴ "
+        "ЖК Podil ул. Глубочицкая, 73-79 100 900 ₴ "
+        "ЖК NVER бул. Леси Украинки, 7-9 7 600 500 ₴"
+    )
+    price, cur = parse_price(blob)
+    assert cur == "UAH"
+    assert price == 1_093_675
+
+
 def test_parse_price_skips_per_sqm_chip():
     price, cur = parse_price("3 181 860 $ 495 $/м² Куренівський пров.")
     assert cur == "USD"

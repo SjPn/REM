@@ -556,6 +556,24 @@ def _currency_closes_previous_amount(text: str, pos: int) -> bool:
     return j >= 0 and text[j].isdigit()
 
 
+def _glued_house_prefix(text: str, num_start: int, captured: str) -> bool:
+    """House number stuck to the next price: «73-79 100 900 ₴», «вул. Х, 35 371 400 ₴»."""
+    groups = re.findall(r"\d+", captured)
+    if len(groups) < 2:
+        return False
+    j = num_start - 1
+    while j >= 0 and text[j] in " \u00a0\n\r\t":
+        j -= 1
+    if j < 0:
+        return False
+    first = groups[0]
+    if text[j] == "-" and len(first) <= 3:
+        return True
+    if text[j] == "," and len(groups) >= 3 and 10 <= int(first) <= 999:
+        return True
+    return False
+
+
 def _collect_price_candidates(text: str) -> list[tuple[float, str, int, int]]:
     """All currency-total matches (overlapping), excluding $/м² rates."""
     patterns = [
@@ -581,6 +599,8 @@ def _collect_price_candidates(text: str) -> list[tuple[float, str, int, int]]:
                 continue
             # Avoid lone trailing thousand-group: "300" from "5 300 $" (not "250 000" after "17").
             captured = m.group(1)
+            if _glued_house_prefix(text, num_start, captured):
+                continue
             if (
                 num_start > 0
                 and text[num_start - 1] in " \u00a0"
@@ -674,6 +694,15 @@ def _resolve_price_candidates(
         pool = sorted(usd, key=lambda x: x[0])
         if pool[-1][0] > pool[0][0] * 8:
             return pool[0][0], pool[0][1]
+
+    # The object's price is the first sum. Later ones are neighbors and new-builds.
+    substantial = [c for c in candidates if c[0] >= 1000]
+    pool = substantial or candidates
+    if len(pool) > 1:
+        earliest = min(pool, key=lambda c: (c[2], -c[3]))
+        largest = max(pool, key=lambda c: c[0])
+        if largest[0] > earliest[0] * 3:
+            return earliest[0], earliest[1]
 
     candidates.sort(key=lambda x: (-x[0], x[2]))
     return candidates[0][0], candidates[0][1]
