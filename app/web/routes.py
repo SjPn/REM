@@ -199,7 +199,10 @@ def _apply_range_filters(
     price_max: float | None,
     area_min: float | None,
     area_max: float | None,
+    deal_type: str | None = None,
 ) -> list[Listing]:
+    """Price box is the monthly total for sale and $/м²·мес for rent."""
+    rent = (deal_type or "").lower() == "rent"
     out: list[Listing] = []
     for x in rows:
         if area_min is not None:
@@ -209,7 +212,16 @@ def _apply_range_filters(
             if x.area_sqm is None or float(x.area_sqm) > area_max:
                 continue
         if price_min is not None or price_max is not None:
-            usd = _listing_price_usd(x)
+            if rent or (x.deal_type or "").lower() == "rent":
+                usd = effective_listing_psm_usd(
+                    x.price,
+                    x.currency,
+                    x.area_sqm,
+                    deal_type=x.deal_type or "rent",
+                    price_per_sqm=x.price_per_sqm,
+                )
+            else:
+                usd = _listing_price_usd(x)
             if usd is None:
                 continue
             if price_min is not None and usd < price_min:
@@ -1081,6 +1093,7 @@ def dashboard(
             price_max=price_max,
             area_min=None,  # already in SQL
             area_max=None,
+            deal_type=deal_type,
         )
         signals_tmp = _annotate_listings(db, candidates, market)
         if opex_mode:

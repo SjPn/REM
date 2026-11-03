@@ -33,6 +33,32 @@ def test_sort_listings_by_price_usd():
     assert got[0].external_id == "c"
 
 
+def test_rent_price_filter_uses_usd_per_sqm():
+    keep = _lst(
+        external_id="keep",
+        deal_type="rent",
+        price=2160,
+        currency="USD",
+        area_sqm=180,
+    )
+    drop = _lst(
+        external_id="drop",
+        deal_type="rent",
+        price=64,
+        currency="USD",
+        area_sqm=320,
+    )
+    got = _apply_range_filters(
+        [keep, drop],
+        price_min=10,
+        price_max=25,
+        area_min=None,
+        area_max=None,
+        deal_type="rent",
+    )
+    assert [x.external_id for x in got] == ["keep"]
+
+
 def test_apply_price_and_area_filters():
     rows = [
         _lst(external_id="1", price=150_000, currency="USD", area_sqm=80),

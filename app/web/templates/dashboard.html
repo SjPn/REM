@@ -197,11 +197,15 @@
         {% endif %}
 
         <div class="f-block">
+          {% if deal_type == 'rent' %}
+          <span class="f-label">$/м²·мес</span>
+          {% else %}
           <span class="f-label">Цена, $</span>
-          <div class="filter-range" title="Гривны пересчитываются в USD">
-            <input type="number" name="price_min" value="{{ price_min }}" min="0" step="1" placeholder="от" aria-label="Цена от, USD" />
+          {% endif %}
+          <div class="filter-range" title="{% if deal_type == 'rent' %}Ставка аренды за м² в месяц, в USD{% else %}Гривны пересчитываются в USD{% endif %}">
+            <input type="number" name="price_min" value="{{ price_min }}" min="0" step="1" placeholder="от" aria-label="{% if deal_type == 'rent' %}Ставка от, $/м²·мес{% else %}Цена от, USD{% endif %}" />
             <span class="muted">–</span>
-            <input type="number" name="price_max" value="{{ price_max }}" min="0" step="1" placeholder="до" aria-label="Цена до, USD" />
+            <input type="number" name="price_max" value="{{ price_max }}" min="0" step="1" placeholder="до" aria-label="{% if deal_type == 'rent' %}Ставка до, $/м²·мес{% else %}Цена до, USD{% endif %}" />
           </div>
         </div>
 
