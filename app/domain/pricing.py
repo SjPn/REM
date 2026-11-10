@@ -244,7 +244,7 @@ def normalize_listing_price(
 
     # Prefer structured parse from card text when both total and rate are present
     parsed_total, parsed_cur = parse_price(text) if text else (None, None)
-    parsed_psm, _ = parse_price_per_sqm(text) if text else (None, None)
+    parsed_psm, parsed_psm_cur = parse_price_per_sqm(text) if text else (None, None)
     if parsed_psm is not None:
         psm_field = psm_field or parsed_psm
         if explicit is None:
@@ -265,14 +265,27 @@ def normalize_listing_price(
         # must not override the card total (e.g. 316 769 ₴).
         total_usd = to_usd(total_f, total_cur)
         implied_usd = (total_usd / area_f) if total_usd else None
-        total_ok = implied_usd is not None and not psm_suspicious(deal_type, implied_usd)
+        floor = psm_floor_usd(deal_type)
+        psm_cur_u = (parsed_psm_cur or "USD").upper()
+        rate_usd = to_usd(psm_f, psm_cur_u)
+        ceiling = _RENT_PSM_CEILING_USD if is_rent else _SALE_PSM_MAX_USD
+        rate_sane = rate_usd is not None and floor <= rate_usd <= ceiling
+        # 279 грн next to «15 $/м²» is the service fee, not the monthly rent.
+        below_floor = implied_usd is not None and implied_usd < floor and rate_sane
+        total_ok = (
+            implied_usd is not None
+            and not psm_suspicious(deal_type, implied_usd)
+            and not below_floor
+        )
 
         if not total_ok:
+            rebuild_cur = psm_cur_u if below_floor else total_cur
             rebuilt = round(psm_f * area_f, 2)
-            rebuilt_usd = to_usd(rebuilt, total_cur)
+            rebuilt_usd = to_usd(rebuilt, rebuild_cur)
             rebuilt_implied = (rebuilt_usd / area_f) if rebuilt_usd else None
             if rebuilt_implied is not None and not psm_suspicious(deal_type, rebuilt_implied):
                 total_f = rebuilt
+                total_cur = rebuild_cur
                 total_usd = rebuilt_usd
                 implied_usd = rebuilt_implied
             elif price is not None:

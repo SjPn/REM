@@ -128,6 +128,26 @@ def test_repair_absurd_from_text_psm_when_field_is_wrong():
     assert not norm.suspicious_psm
 
 
+def test_normalize_rent_rate_not_opex_fee():
+    """OLX puts 15 $/м² in the price field and 279 грн/м² as service, not the rent."""
+    description = (
+        "Ціна оренди - 15 $/м2 + обслуговування 279грн\\м2 + комунальні. "
+        "Загальна площа офісу 396.6 м2."
+    )
+    norm = normalize_listing_price(
+        price=681,
+        currency="UAH",
+        area_sqm=396.6,
+        deal_type="rent",
+        title="Офіс Саксаганського 70a",
+        description=description,
+    )
+    assert norm.currency == "USD"
+    assert norm.price == pytest.approx(15 * 396.6, rel=0.01)
+    assert norm.price_per_sqm == pytest.approx(15, rel=0.01)
+    assert not norm.suspicious_psm
+
+
 def test_normalize_rent_price_that_is_actually_psm():
     norm = normalize_listing_price(
         price=15,
