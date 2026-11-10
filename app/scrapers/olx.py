@@ -4,7 +4,8 @@ import json
 import logging
 import re
 from collections.abc import Callable, Iterator
-from urllib.parse import urljoin
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -23,7 +24,13 @@ from app.scrapers.detail import (
     parse_offer_price,
 )
 from app.scrapers.enrich import enrich_listings
-from app.scrapers.http_utils import HttpClient, guess_property_type, parse_area, parse_price
+from app.scrapers.http_utils import (
+    HttpClient,
+    PortalBlockedError,
+    guess_property_type,
+    parse_area,
+    parse_price,
+)
 from app.scrapers.paging import iter_feed_pages
 from app.scrapers.text_fix import clean_text, decode_js_escaped_json, fix_mojibake
 
@@ -40,6 +47,20 @@ OLX_SEARCH = {
         "https://www.olx.ua/uk/nedvizhimost/kiev/kommercheskaya-nedvizhimost/arenda-kommercheskoy-nedvizhimosti/",
     ],
 }
+
+# Office lists are separate categories. The HTML "newest" order mixes promoted
+# cards, so these feeds use the offers API, which sorts by last refresh.
+# Sale: .../prodazha-kommercheskoy-nedvizhimosti/ofisy/kiev/ (category 3681)
+# Rent: .../arenda-kommercheskoy-nedvizhimosti/ofisy/kiev/ (category 3690)
+OLX_OFFICE_API = (
+    (DealType.SALE, 3681),
+    (DealType.RENT, 3690),
+)
+_OLX_KYIV_CITY_ID = 268
+_OLX_OFFERS_URL = "https://www.olx.ua/api/v1/offers/"
+_OFFICE_PAGE_SIZE = 40
+_OFFICE_MAX_PAGES = 25
+_OFFICE_LOOKBACK = timedelta(hours=36)
 
 
 class OlxScraper:
@@ -58,37 +79,166 @@ class OlxScraper:
         max_details: int | None = None,
     ) -> Iterator[RawListing]:
         pages = max_pages or self.settings.crawl_max_pages
+        seen: set[str] = set()
+        collected: list[RawListing] = []
         for deal_type, bases in OLX_SEARCH.items():
-            html = None
-            base_url = bases[0]
-            for candidate in bases:
-                try:
-                    html = self.client.get_list_text(candidate)
-                    base_url = candidate
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("OLX list candidate failed %s: %s", candidate, exc)
-            if not html:
-                if not self.settings.crawl_tls_impersonate:
-                    logger.error(
-                        "OLX: все URL недоступны. Задайте CRAWL_TLS_IMPERSONATE=chrome131 "
-                        "(CloudFront блокирует httpx) или HTTP_PROXY."
-                    )
+            batch = self._crawl_html_feed(
+                deal_type, bases, pages, stale_page_limit=stale_page_limit
+            )
+            collected.extend(self._dedupe(batch, seen))
+        for deal_type, category_id in OLX_OFFICE_API:
+            try:
+                batch = self._crawl_office_api(deal_type, category_id)
+            except PortalBlockedError as exc:
+                logger.warning("OLX offices %s blocked: %s", deal_type.value, exc)
+                break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("OLX offices %s failed: %s", deal_type.value, exc)
                 continue
-            batch = iter_feed_pages(
-                self.client,
-                base_url,
-                pages,
-                lambda page_html, dt=deal_type: self._parse_list(page_html, dt),
-                stale_page_limit=stale_page_limit,
-                log_label="OLX",
-                first_html=html,
-            )
-            if batch:
-                logger.info("OLX %s: %s cards from list pages", deal_type.value, len(batch))
+            fresh = self._dedupe(batch, seen)
+            if fresh:
+                logger.info("OLX offices %s: %s cards", deal_type.value, len(fresh))
+            collected.extend(fresh)
+        if collected:
             yield from enrich_listings(
-                self, batch, needs_detail=needs_detail, max_details=max_details
+                self, collected, needs_detail=needs_detail, max_details=max_details
             )
+
+    def _crawl_html_feed(
+        self,
+        deal_type: DealType,
+        bases: list[str],
+        pages: int,
+        *,
+        stale_page_limit: int,
+    ) -> list[RawListing]:
+        html = None
+        base_url = bases[0]
+        for candidate in bases:
+            try:
+                html = self.client.get_list_text(candidate)
+                base_url = candidate
+                break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("OLX list candidate failed %s: %s", candidate, exc)
+        if not html:
+            if not self.settings.crawl_tls_impersonate:
+                logger.error(
+                    "OLX: все URL недоступны. Задайте CRAWL_TLS_IMPERSONATE=chrome131 "
+                    "(CloudFront блокирует httpx) или HTTP_PROXY."
+                )
+            return []
+        batch = iter_feed_pages(
+            self.client,
+            base_url,
+            pages,
+            lambda page_html, dt=deal_type: self._parse_list(page_html, dt),
+            stale_page_limit=stale_page_limit,
+            log_label="OLX",
+            first_html=html,
+        )
+        if batch:
+            logger.info("OLX %s: %s cards from list pages", deal_type.value, len(batch))
+        return batch
+
+    def _crawl_office_api(self, deal_type: DealType, category_id: int) -> list[RawListing]:
+        """Newest office cards. Stop once the page is older than the lookback."""
+        cutoff = datetime.now(timezone.utc) - _OFFICE_LOOKBACK
+        offset = 0
+        items: list[RawListing] = []
+        for _page in range(_OFFICE_MAX_PAGES):
+            payload = self._fetch_offers(category_id, offset)
+            offers = payload.get("data") or []
+            if not isinstance(offers, list) or not offers:
+                break
+            promoted = set((payload.get("metadata") or {}).get("promoted") or [])
+            refresh_times: list[str] = []
+            for index, offer in enumerate(offers):
+                if not isinstance(offer, dict):
+                    continue
+                listing = self._offer_to_raw(offer, deal_type)
+                if listing is not None:
+                    items.append(listing)
+                if index not in promoted:
+                    stamp = offer.get("last_refresh_time")
+                    if isinstance(stamp, str):
+                        refresh_times.append(stamp)
+            if office_feed_reached_lookback(refresh_times, cutoff=cutoff):
+                break
+            nxt = ((payload.get("links") or {}).get("next") or {}).get("href")
+            if not nxt:
+                break
+            offset = _offset_from_href(str(nxt), fallback=offset + _OFFICE_PAGE_SIZE)
+        return items
+
+    def _fetch_offers(self, category_id: int, offset: int) -> dict:
+        text = self.client.get_text(
+            _OLX_OFFERS_URL,
+            params={
+                "offset": str(offset),
+                "limit": str(_OFFICE_PAGE_SIZE),
+                "category_id": str(category_id),
+                "city_id": str(_OLX_KYIV_CITY_ID),
+                "sort_by": "created_at:desc",
+            },
+        )
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            return {}
+        return data
+
+    def _offer_to_raw(self, offer: dict, deal_type: DealType) -> RawListing | None:
+        params: list[dict] = []
+        price = None
+        currency = None
+        for param in offer.get("params") or []:
+            if not isinstance(param, dict):
+                continue
+            key = str(param.get("key") or "")
+            if key == "price" or param.get("type") == "price":
+                value = param.get("value") or {}
+                if isinstance(value, dict):
+                    price = value.get("value")
+                    currency = value.get("currency")
+                continue
+            if key in ("total_area", "floor"):
+                number = _olx_param_number(param.get("value"))
+                if number is not None:
+                    params.append({"key": key, "normalizedValue": number})
+        user = offer.get("user") if isinstance(offer.get("user"), dict) else {}
+        business = offer.get("business")
+        geo = offer.get("map") if isinstance(offer.get("map"), dict) else {}
+        loc = offer.get("location") if isinstance(offer.get("location"), dict) else {}
+        city = loc.get("city") if isinstance(loc.get("city"), dict) else {}
+        district = loc.get("district") if isinstance(loc.get("district"), dict) else {}
+        ad = {
+            "id": offer.get("id"),
+            "url": offer.get("url"),
+            "title": offer.get("title"),
+            "description": offer.get("description"),
+            "status": offer.get("status"),
+            "price": {"regularPrice": {"value": price, "currencyCode": currency or "UAH"}},
+            "params": params,
+            "location": {
+                "cityName": city.get("name"),
+                "districtName": district.get("name"),
+            },
+            "map": {"lat": geo.get("lat"), "lon": geo.get("lon")},
+            "user": {"name": user.get("name")},
+            "isBusiness": business if isinstance(business, bool) else None,
+        }
+        return self._ad_to_raw(ad, deal_type)
+
+    @staticmethod
+    def _dedupe(items: list[RawListing], seen: set[str]) -> list[RawListing]:
+        fresh: list[RawListing] = []
+        for item in items:
+            ext = str(item.external_id or "").strip()
+            if not ext or ext in seen:
+                continue
+            seen.add(ext)
+            fresh.append(item)
+        return fresh
 
     def fetch_detail(self, listing: RawListing) -> RawListing:
         html = self.client.get_text(listing.url)
@@ -302,3 +452,45 @@ class OlxScraper:
     def _guess_location(text: str) -> str | None:
         m = re.search(r"(Київ|Киев|Київська область)[^|]{0,80}", text)
         return m.group(0).strip() if m else "Київ"
+
+
+def _olx_param_number(value: object) -> str | None:
+    raw = value.get("key") if isinstance(value, dict) else value
+    label = value.get("label") if isinstance(value, dict) else None
+    for candidate in (raw, label):
+        if candidate is None:
+            continue
+        match = re.search(r"\d+(?:[.,]\d+)?", str(candidate))
+        if match:
+            return match.group(0).replace(",", ".")
+    return None
+
+
+def _parse_olx_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def office_feed_reached_lookback(refresh_times: list[str], *, cutoff: datetime) -> bool:
+    """True when the oldest non-promoted card on the page is past the lookback."""
+    stamps = [stamp for stamp in (_parse_olx_time(raw) for raw in refresh_times) if stamp]
+    if not stamps:
+        return False
+    return min(stamps) <= cutoff
+
+
+def _offset_from_href(href: str, *, fallback: int) -> int:
+    try:
+        raw = parse_qs(urlsplit(href).query).get("offset", [None])[0]
+        if raw is None:
+            return fallback
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return fallback
