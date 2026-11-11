@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 from app.domain.market_stats import to_usd
 
-# Rent $/m²·мес: under $2 with no «per m²» mark the number is a rate. $2–$3 can be a real month.
+# Rent $/m²·мес: under $2 with no price in the text the number is a rate.
+# A sum written in the title or the ad stays the month down to $1, even under $2.
 _RENT_PSM_FLOOR_USD = 3.0
 _RENT_BARE_RATE_USD = 2.0
+_RENT_TEXT_KEEP_USD = 1.0
 _RENT_PSM_CEILING_USD = 70.0
 # Sale: expand only when implied $/m² is absurdly low (price field is clearly a rate).
 _SALE_PSM_FLOOR_USD = 80.0
@@ -26,6 +29,225 @@ class PriceNorm:
     reinterpreted_as_psm: bool
     suspicious_psm: bool = False
     detail: str = ""
+
+
+_PER_MONTH_RE = re.compile(
+    r"(?P<lead>\$|usd|€|євро)?\s*"
+    r"(?P<num>\d{1,3}(?:[ \u00a0]\d{3})+|\d+(?:[.,]\d+)?)\s*"
+    r"(?P<tail>грн|₴|uah|\$|usd|дол(?:ар\w*)?|євро|€)?\s*"
+    r"/\s*(?:міс|мес)\w*",
+    re.IGNORECASE,
+)
+_NAMED_PRICE_RE = re.compile(
+    r"(?:ціна|цена|орендна\s+плата|арендная\s+плата)\s*[:\-]?\s*"
+    r"(?P<lead>\$|usd|€|євро)?\s*"
+    r"(?P<num>\d{1,3}(?:[ \u00a0]\d{3})+|\d+(?:[.,]\d+)?)\s*"
+    r"(?P<tail>грн|₴|uah|\$|usd|дол(?:ар\w*)?|євро|€)?",
+    re.IGNORECASE,
+)
+_BARE_HRYVNIA_RE = re.compile(
+    r"(\d{1,3}(?:[ \u00a0]\d{3})+|\d+)\s*₴",
+)
+_HOURLY_RE = re.compile(
+    r"погодин|почасов|посуточ|за\s+годину|за\s+час\b|на\s+день|/\s*день",
+    re.IGNORECASE,
+)
+
+
+def _money_token(raw: str) -> float | None:
+    cleaned = raw.replace("\xa0", " ").strip()
+    if re.fullmatch(r"\d{1,3}(?: \d{3})+", cleaned):
+        cleaned = cleaned.replace(" ", "")
+    else:
+        cleaned = cleaned.replace(" ", "").replace(",", ".")
+    try:
+        value = float(cleaned)
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return value
+
+
+def _currency_token(token: str | None) -> str:
+    raw = (token or "грн").lower()
+    if raw in ("$", "usd") or raw.startswith("дол"):
+        return "USD"
+    if raw in ("€", "євро"):
+        return "EUR"
+    return "UAH"
+
+
+def _first_money(pattern: re.Pattern[str], text: str | None) -> tuple[float, str] | None:
+    if not text or _HOURLY_RE.search(text):
+        return None
+    match = pattern.search(text)
+    if not match:
+        return None
+    value = _money_token(match.group("num"))
+    if value is None:
+        return None
+    token = match.group("lead") or match.group("tail")
+    return value, _currency_token(token)
+
+
+def _amount_is_rate(title: str | None, description: str | None, amount: float) -> bool:
+    text = " ".join(part for part in (title, description) if part)
+    rate = extract_explicit_psm(text)
+    if rate is None:
+        return False
+    return abs(rate - amount) / max(amount, 1.0) <= 0.05
+
+
+def stated_monthly_rent(
+    title: str | None,
+    description: str | None,
+    area_sqm: float | None,
+) -> tuple[float, str, str] | None:
+    """Month's rent written in the title or the ad, if the wording is explicit.
+
+    «13 000 грн/міс» and «ціна 600 дол» are the month even when the result is
+    under $2/m². A bare «500 ₴» on a large room is not: that still goes through
+    the $2 line. A bare «3 000 ₴» is the month when it lands between $1 and $70.
+    """
+    for part in (description, title):
+        found = _first_money(_PER_MONTH_RE, part)
+        if found is not None:
+            sane = _sane_stated_month(found, area_sqm, bare=False)
+            if sane is not None and not _amount_is_rate(title, description, sane[0]):
+                return sane[0], sane[1], "month"
+    for part in (title, description):
+        found = _first_money(_NAMED_PRICE_RE, part)
+        if found is not None:
+            sane = _sane_stated_month(found, area_sqm, bare=False)
+            if sane is not None and not _amount_is_rate(title, description, sane[0]):
+                return sane[0], sane[1], "month"
+    if description and not _HOURLY_RE.search(description):
+        match = _BARE_HRYVNIA_RE.search(description)
+        if match:
+            value = _money_token(match.group(1))
+            if value is not None:
+                sane = _sane_stated_month((value, "UAH"), area_sqm, bare=True)
+                if sane is not None and not _amount_is_rate(title, description, sane[0]):
+                    return sane[0], sane[1], "hryvnia"
+    return None
+
+
+def _sane_stated_month(
+    found: tuple[float, str],
+    area_sqm: float | None,
+    *,
+    bare: bool,
+) -> tuple[float, str] | None:
+    amount, currency = found
+    if area_sqm is None:
+        return None if bare else found
+    try:
+        area = float(area_sqm)
+    except (TypeError, ValueError):
+        return None
+    if area <= 0:
+        return None
+    usd = to_usd(amount, currency)
+    if usd is None:
+        return None
+    implied = usd / area
+    if implied > _RENT_PSM_CEILING_USD:
+        return None
+    if bare and implied < _RENT_TEXT_KEEP_USD:
+        return None
+    return found
+
+
+_PLAIN_AMOUNT_RE = re.compile(
+    r"(\d{1,3}(?:[ \u00a0]\d{3})+|\d{2,7}(?:[.,]\d+)?)\s*"
+    r"(грн|₴|uah|\$|usd|дол(?:ар\w*)?)",
+    re.IGNORECASE,
+)
+_RATE_TAIL_RE = re.compile(
+    r"\s*(?:/|\s)\s*(?:м(?:²|2)|кв)",
+    re.IGNORECASE,
+)
+
+
+def _same_usd(left: float, left_cur: str | None, right: float, right_cur: str | None) -> bool:
+    left_usd = to_usd(left, left_cur)
+    right_usd = to_usd(right, right_cur)
+    if left_usd is None or right_usd is None or right_usd <= 0:
+        return False
+    return abs(left_usd - right_usd) / right_usd <= 0.05
+
+
+def _fee_was_multiplied(
+    title: str | None,
+    description: str | None,
+    stored: float,
+    stored_cur: str | None,
+    area: float,
+    month: float,
+) -> bool:
+    """Stored total is some other sum from the text (a service fee) times the area."""
+    text = " ".join(part for part in (title, description) if part)
+    for match in _PLAIN_AMOUNT_RE.finditer(text):
+        if _RATE_TAIL_RE.match(text[match.end() : match.end() + 12]):
+            continue
+        value = _money_token(match.group(1))
+        if value is None or abs(value - month) / max(month, 1.0) <= 0.05:
+            continue
+        if _same_usd(stored, stored_cur, value * area, _currency_token(match.group(2))):
+            return True
+    return False
+
+
+def rent_text_correction(
+    price: float | None,
+    currency: str | None,
+    area_sqm: float | None,
+    title: str | None,
+    description: str | None,
+) -> tuple[float, str] | None:
+    """Stored rent to replace, when the title or the ad names the month.
+
+    Replaces a price only when it is that month times the area, a fee times
+    the area, or itself under $2/m². A sane stored month that merely disagrees
+    with another number in the text is left alone.
+    """
+    if price is None or area_sqm is None:
+        return None
+    try:
+        stored = float(price)
+        area = float(area_sqm)
+    except (TypeError, ValueError):
+        return None
+    if stored <= 0 or area < 10:
+        return None
+    stated = stated_monthly_rent(title, description, area)
+    if stated is None:
+        return None
+    amount, scur, kind = stated
+    month_usd = to_usd(amount, scur)
+    if month_usd is None:
+        return None
+    month_psm = month_usd / area
+    if month_psm < _RENT_TEXT_KEEP_USD or month_psm > _RENT_PSM_CEILING_USD:
+        return None
+    if (scur or "").upper() != (currency or "UAH").upper():
+        return None
+    if _same_usd(stored, currency, amount, scur):
+        return None
+    stored_usd = to_usd(stored, currency)
+    cheap_field = (
+        kind == "month"
+        and stored_usd is not None
+        and stored_usd / area < _RENT_BARE_RATE_USD
+    )
+    multiplied = _same_usd(stored, currency, amount * area, scur)
+    fee = kind == "month" and _fee_was_multiplied(
+        title, description, stored, currency, area, amount
+    )
+    if multiplied or fee or cheap_field:
+        return round(amount, 2), scur
+    return None
 
 
 def extract_explicit_psm(text: str | None) -> float | None:
@@ -206,8 +428,9 @@ def normalize_listing_price(
     """
     Repair only when the stored price is almost certainly already $/m².
 
-    Rent: 3 000 грн for 27 m² ($2.5/m²) is still the month. Without a «per m²»
-    mark, multiply a rent only when the number is under $2/m².
+    Rent: 3 000 грн for 27 m² ($2.5/m²) is still the month. Without a price in
+    the title or the ad, multiply a rent only under $2/m². A sum written in
+    the title or the text stays the month down to $1/m².
     Never multiply a full monthly total that already yields a sane $/m².
     """
     from app.scrapers.http_utils import parse_price, parse_price_per_sqm
@@ -337,10 +560,35 @@ def normalize_listing_price(
             "explicit_psm_matches_price",
         )
 
-    # Under $2/m² a rent figure with no «per m²» mark is a rate, not the month.
-    # 3 000 грн for 27 m² is $2.5 and stays. A marked «N $/м²» already returned
-    # above. Sale totals of a few thousand dollars stay a $/m² rate.
-    bare_rate = implied < floor and (not is_rent or implied < _RENT_BARE_RATE_USD)
+    # A month written in the title or the ad wins over the $2 line when the
+    # stored figure is that month, that month times the area, or a fee times
+    # the area. Any other disagreement with the text is left as stored.
+    stated_matches = False
+    if is_rent:
+        stated = stated_monthly_rent(title, description, a)
+        if stated is not None and _same_usd(p, cur, stated[0], stated[1]):
+            stated_matches = True
+        elif rent_text_correction(p, cur, a, title, description) is not None:
+            amount, scur = rent_text_correction(p, cur, a, title, description)
+            psm_out = round(amount / a, 4)
+            rate = extract_explicit_psm(text)
+            stated_usd = to_usd(amount, scur)
+            rate_usd = to_usd(rate, "USD") if rate is not None else None
+            if (
+                stated_usd
+                and rate_usd
+                and abs(rate_usd - stated_usd / a) / max(stated_usd / a, 0.5) <= 0.12
+            ):
+                psm_out = rate
+            return PriceNorm(amount, scur, psm_out, False, False, "stated_monthly")
+
+    # Under $2/m² an unlabeled rent figure is a rate. The written month above
+    # already returned. Sale totals of a few thousand dollars stay a $/m² rate.
+    bare_rate = (
+        not stated_matches
+        and implied < floor
+        and (not is_rent or implied < _RENT_BARE_RATE_USD)
+    )
     if bare_rate:
         if is_rent:
             rate_ok = usd <= _RENT_PSM_CEILING_USD

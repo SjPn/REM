@@ -185,21 +185,60 @@ def test_normalize_expands_absurdly_cheap_rent_as_rate():
     assert norm.reinterpreted_as_psm
 
 
-def test_normalize_expands_rent_under_two_dollars_per_sqm():
-    """3 000 грн for 45 m² is about $1.5/m² — below the $2 line, so it is a rate."""
+def test_normalize_keeps_rent_named_in_the_ad_under_two_dollars():
+    """3 000 ₴ written in the ad for 45 m² is about $1.5/m² and stays the month."""
     norm = normalize_listing_price(
         price=3000,
         currency="UAH",
         area_sqm=45,
         deal_type="rent",
         title="Оренда офісу 45 м²",
-        description="3 000 ₴ 45 м²",
+        description="3 000 ₴ 45 м² офіс на Великій Васильківській",
+    )
+    assert norm.price == 3000
+    assert not norm.reinterpreted_as_psm
+
+
+def test_normalize_expands_rent_under_two_dollars_per_sqm():
+    """The same 3 000 грн with no price in the title or the text is a rate."""
+    norm = normalize_listing_price(
+        price=3000,
+        currency="UAH",
+        area_sqm=45,
+        deal_type="rent",
+        title="Оренда офісу 45 м²",
+        description="Офіс біля метро.",
     )
     assert norm.price == pytest.approx(135_000, rel=0.01)
     assert norm.reinterpreted_as_psm
 
 
-def test_normalize_keeps_small_monthly_rent():
+def test_normalize_uses_monthly_phrase_from_the_ad():
+    norm = normalize_listing_price(
+        price=4000,
+        currency="UAH",
+        area_sqm=10,
+        deal_type="rent",
+        title="Ціна: 16000 + комунальні. Обслуговування — 400 грн",
+        description="13 000 грн/міс - БЕЗ КОМІСІЇ - 10 м²",
+    )
+    assert norm.price == 13000
+    assert norm.currency == "UAH"
+    assert not norm.reinterpreted_as_psm
+
+
+def test_normalize_keeps_dollar_month_from_the_title():
+    norm = normalize_listing_price(
+        price=600,
+        currency="USD",
+        area_sqm=45,
+        deal_type="rent",
+        title="Офіс 45 кв.м. Ціна 600 дол з експлуатаційними",
+        description="600 $/міс - 45 м²",
+    )
+    assert norm.price == 600
+    assert norm.currency == "USD"
+    assert not norm.reinterpreted_as_psm
     """3 000 грн for 27 m² is about $2.5/m² and stays the month."""
     norm = normalize_listing_price(
         price=3000,

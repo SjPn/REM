@@ -11,7 +11,7 @@ def test_restores_m2bomber_hryvnia_total_times_area():
         title="Оренда офісу 27м2 ціна 3000грн",
         description="Київ 3 000 ₴ 27 м² Офіс біля метро.",
     )
-    assert restored == 3000
+    assert restored == (3000, "UAH")
 
 
 def test_restores_olx_title_price():
@@ -24,7 +24,33 @@ def test_restores_olx_title_price():
         title="Оренда офісу 27м2 ціна 3000грн",
         description="Офіс біля метро Лівобережна.",
     )
-    assert restored == 3000
+    assert restored == (3000, "UAH")
+
+
+def test_restores_price_written_in_the_ad_under_two_dollars():
+    restored = restored_monthly_rent(
+        price=135000,
+        currency="UAH",
+        area_sqm=45,
+        deal_type="rent",
+        source="m2bomber",
+        title="Оренда офісу 45 м²",
+        description="3 000 ₴ 45 м² офіс",
+    )
+    assert restored == (3000, "UAH")
+
+
+def test_keeps_tiny_hryvnia_that_is_a_rate():
+    restored = restored_monthly_rent(
+        price=120000,
+        currency="UAH",
+        area_sqm=240,
+        deal_type="rent",
+        source="m2bomber",
+        title="Оренда офісу 240 м²",
+        description="500 ₴ 240 м² офіс",
+    )
+    assert restored is None
 
 
 def test_keeps_explicit_hryvnia_per_sqm():

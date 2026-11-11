@@ -6,7 +6,6 @@ stored total became 81 000. A real rate («15 $/м²», «1000 грн./кв.м»
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from sqlalchemy import select
@@ -16,44 +15,7 @@ from app.db.models import Listing, ListingSnapshot, PropertyEvent
 from app.domain.enums import EventType
 from app.domain.listing_stats import apply_auto_stats_exclusion
 from app.domain.market_stats import to_usd
-from app.domain.pricing import extract_explicit_psm, normalize_listing_price, psm_suspicious
-from app.scrapers.http_utils import parse_price
-
-_HOURLY = re.compile(
-    r"погодин|почасов|посуточ|за\s+годину|за\s+час\b|на\s+день|/\s*день",
-    re.IGNORECASE,
-)
-_M2_HRYVNIA = re.compile(r"(\d{1,3}(?:[ \u00a0]\d{3})+|\d+)\s*₴")
-_TITLE_PRICE = re.compile(r"ціна\s*(\d[\d \u00a0]{0,12})\s*грн", re.IGNORECASE)
-
-
-def _amount(raw: str) -> float | None:
-    cleaned = raw.replace("\xa0", "").replace(" ", "")
-    try:
-        value = float(cleaned)
-    except ValueError:
-        return None
-    if value <= 0:
-        return None
-    return value
-
-
-def _marked_monthly_total(source: str | None, title: str | None, description: str | None) -> float | None:
-    """Hryvnia amount the card itself calls the price, not a rate and not a day fee."""
-    text = " ".join(t for t in (title, description) if t)
-    if not text or _HOURLY.search(text):
-        return None
-    if extract_explicit_psm(text) is not None:
-        return None
-    marked: float | None = None
-    if (source or "") == "m2bomber":
-        m = _M2_HRYVNIA.search(text)
-        if m:
-            marked = _amount(m.group(1))
-    title_m = _TITLE_PRICE.search(title or "")
-    if title_m:
-        marked = _amount(title_m.group(1))
-    return marked
+from app.domain.pricing import psm_suspicious, rent_text_correction
 
 
 def restored_monthly_rent(
@@ -65,8 +27,9 @@ def restored_monthly_rent(
     title: str | None,
     description: str | None,
     source: str | None,
-) -> float | None:
-    """Monthly total to restore, when the stored price is that total times the area."""
+) -> tuple[float, str] | None:
+    """Monthly total written in the title or the ad, when the stored price differs."""
+    del source
     if (deal_type or "").lower() != "rent":
         return None
     if price is None or area_sqm is None:
@@ -78,34 +41,7 @@ def restored_monthly_rent(
         return None
     if stored <= 0 or area < 10:
         return None
-    marked = _marked_monthly_total(source, title, description)
-    if marked is None:
-        return None
-    text = " ".join(t for t in (title, description) if t)
-    parsed, cur = parse_price(text)
-    if parsed is None or cur is None:
-        return None
-    if (cur or "").upper() != "UAH" or (currency or "").upper() != "UAH":
-        return None
-    if abs(float(parsed) - marked) / marked > 0.05:
-        return None
-    if stored <= marked * 2:
-        return None
-    if abs(stored / area - marked) / marked > 0.05:
-        return None
-    norm = normalize_listing_price(
-        price=marked,
-        currency="UAH",
-        area_sqm=area,
-        deal_type="rent",
-        title=title,
-        description=description,
-    )
-    if norm.price is None or norm.reinterpreted_as_psm:
-        return None
-    if abs(float(norm.price) - marked) / marked > 0.05:
-        return None
-    return marked
+    return rent_text_correction(stored, currency, area, title, description)
 
 
 def find_false_rent_expansions(db: Session) -> list[dict[str, Any]]:
@@ -128,6 +64,7 @@ def find_false_rent_expansions(db: Session) -> list[dict[str, Any]]:
         )
         if restored is None or listing.area_sqm is None:
             continue
+        amount, scur = restored
         area = float(listing.area_sqm)
         out.append(
             {
@@ -135,9 +72,9 @@ def find_false_rent_expansions(db: Session) -> list[dict[str, Any]]:
                 "source": listing.source,
                 "url": listing.url,
                 "old_price": float(listing.price),
-                "new_price": restored,
-                "currency": "UAH",
-                "new_psm": round(restored / area, 4),
+                "new_price": amount,
+                "currency": scur,
+                "new_psm": round(amount / area, 4),
             }
         )
     return out
@@ -165,7 +102,7 @@ def repair_false_rent_expansions(db: Session, *, dry_run: bool = True) -> dict[s
             continue
         old = float(item["old_price"])
         listing.price = float(item["new_price"])
-        listing.currency = "UAH"
+        listing.currency = str(item["currency"] or "UAH")
         listing.price_per_sqm = float(item["new_psm"])
         for snap in db.scalars(
             select(ListingSnapshot).where(ListingSnapshot.listing_id == listing.id)
