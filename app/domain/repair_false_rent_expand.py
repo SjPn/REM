@@ -48,7 +48,7 @@ def find_false_rent_expansions(db: Session) -> list[dict[str, Any]]:
     rows = db.scalars(
         select(Listing).where(
             Listing.deal_type == "rent",
-            Listing.status.in_(("active", "relisted")),
+            Listing.price > 0,
         )
     ).all()
     out: list[dict[str, Any]] = []

@@ -213,6 +213,28 @@ def test_normalize_expands_rent_under_two_dollars_per_sqm():
     assert norm.reinterpreted_as_psm
 
 
+def test_decimal_cents_are_not_a_separate_month():
+    """«698, 40 $/мес» is 698.40. A sane stored total is not replaced by the 40."""
+    from app.domain.pricing import stated_monthly_rent
+
+    stated = stated_monthly_rent(
+        "вул. Мечникова, 14/1",
+        "Стоимость в формате Total  698, 40 $/мес.",
+        29.1,
+    )
+    assert stated is not None
+    assert stated[0] == pytest.approx(698.40, abs=0.01)
+    norm = normalize_listing_price(
+        price=1164,
+        currency="USD",
+        area_sqm=29.1,
+        deal_type="rent",
+        title="вул. Мечникова, 14/1",
+        description="Стоимость в формате Total  698, 40 $/мес.",
+    )
+    assert norm.price == 1164
+
+
 def test_normalize_uses_monthly_phrase_from_the_ad():
     norm = normalize_listing_price(
         price=4000,

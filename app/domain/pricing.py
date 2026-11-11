@@ -33,7 +33,7 @@ class PriceNorm:
 
 _PER_MONTH_RE = re.compile(
     r"(?P<lead>\$|usd|€|євро)?\s*"
-    r"(?P<num>\d{1,3}(?:[ \u00a0]\d{3})+|\d+(?:[.,]\d+)?)\s*"
+    r"(?P<num>\d{1,3}(?:[ \u00a0]\d{3})+|\d+(?:,\s*\d{2}|[.,]\d+)?)\s*"
     r"(?P<tail>грн|₴|uah|\$|usd|дол(?:ар\w*)?|євро|€)?\s*"
     r"/\s*(?:міс|мес)\w*",
     re.IGNORECASE,
@@ -41,7 +41,7 @@ _PER_MONTH_RE = re.compile(
 _NAMED_PRICE_RE = re.compile(
     r"(?:ціна|цена|орендна\s+плата|арендная\s+плата)\s*[:\-]?\s*"
     r"(?P<lead>\$|usd|€|євро)?\s*"
-    r"(?P<num>\d{1,3}(?:[ \u00a0]\d{3})+|\d+(?:[.,]\d+)?)\s*"
+    r"(?P<num>\d{1,3}(?:[ \u00a0]\d{3})+|\d+(?:,\s*\d{2}|[.,]\d+)?)\s*"
     r"(?P<tail>грн|₴|uah|\$|usd|дол(?:ар\w*)?|євро|€)?",
     re.IGNORECASE,
 )
@@ -189,6 +189,10 @@ def _fee_was_multiplied(
     """Stored total is some other sum from the text (a service fee) times the area."""
     text = " ".join(part for part in (title, description) if part)
     for match in _PLAIN_AMOUNT_RE.finditer(text):
+        if match.start() and text[match.start() - 1] in ",.":
+            continue
+        if match.start() > 1 and text[match.start() - 2] == "," and text[match.start() - 1] in " \u00a0":
+            continue
         if _RATE_TAIL_RE.match(text[match.end() : match.end() + 12]):
             continue
         value = _money_token(match.group(1))
