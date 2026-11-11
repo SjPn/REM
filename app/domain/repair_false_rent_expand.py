@@ -1,6 +1,6 @@
 """Undo a monthly rent that was multiplied by area.
 
-3 000 грн for 27 m² is under $3/m² and used to be treated as a rate, so the
+3 000 грн for 27 m² is about $2.5/m² and used to be treated as a rate, so the
 stored total became 81 000. A real rate («15 $/м²», «1000 грн./кв.м») stays.
 """
 

@@ -7,9 +7,9 @@ from dataclasses import dataclass
 
 from app.domain.market_stats import to_usd
 
-# Rent $/m²·мес: under $1 the number is a rate (500 грн on 240 m²). $1–$3 can be a real month.
+# Rent $/m²·мес: under $2 with no «per m²» mark the number is a rate. $2–$3 can be a real month.
 _RENT_PSM_FLOOR_USD = 3.0
-_RENT_BARE_RATE_USD = 1.0
+_RENT_BARE_RATE_USD = 2.0
 _RENT_PSM_CEILING_USD = 70.0
 # Sale: expand only when implied $/m² is absurdly low (price field is clearly a rate).
 _SALE_PSM_FLOOR_USD = 80.0
@@ -207,8 +207,7 @@ def normalize_listing_price(
     Repair only when the stored price is almost certainly already $/m².
 
     Rent: 3 000 грн for 27 m² ($2.5/m²) is still the month. Without a «per m²»
-    mark, multiply a rent only when the number is under $1/m² — then it is a
-    rate (500 грн on 240 m²), not a month's rent.
+    mark, multiply a rent only when the number is under $2/m².
     Never multiply a full monthly total that already yields a sane $/m².
     """
     from app.scrapers.http_utils import parse_price, parse_price_per_sqm
@@ -338,9 +337,9 @@ def normalize_listing_price(
             "explicit_psm_matches_price",
         )
 
-    # Under $1/m² a rent figure is a rate (500 грн for 240 m²), not the month.
-    # $1–$3 is a cheap month: 3 000 грн for 27 m². A marked «N $/м²» already
-    # returned above. Sale totals of a few thousand dollars stay a $/m² rate.
+    # Under $2/m² a rent figure with no «per m²» mark is a rate, not the month.
+    # 3 000 грн for 27 m² is $2.5 and stays. A marked «N $/м²» already returned
+    # above. Sale totals of a few thousand dollars stay a $/m² rate.
     bare_rate = implied < floor and (not is_rent or implied < _RENT_BARE_RATE_USD)
     if bare_rate:
         if is_rent:

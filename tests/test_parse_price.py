@@ -185,8 +185,22 @@ def test_normalize_expands_absurdly_cheap_rent_as_rate():
     assert norm.reinterpreted_as_psm
 
 
+def test_normalize_expands_rent_under_two_dollars_per_sqm():
+    """3 000 грн for 45 m² is about $1.5/m² — below the $2 line, so it is a rate."""
+    norm = normalize_listing_price(
+        price=3000,
+        currency="UAH",
+        area_sqm=45,
+        deal_type="rent",
+        title="Оренда офісу 45 м²",
+        description="3 000 ₴ 45 м²",
+    )
+    assert norm.price == pytest.approx(135_000, rel=0.01)
+    assert norm.reinterpreted_as_psm
+
+
 def test_normalize_keeps_small_monthly_rent():
-    """3 000 грн for 27 m² is under $3/m² and is still the month, not a rate."""
+    """3 000 грн for 27 m² is about $2.5/m² and stays the month."""
     norm = normalize_listing_price(
         price=3000,
         currency="UAH",
