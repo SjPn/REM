@@ -758,10 +758,20 @@ def parse_price_per_sqm(text: str | None) -> tuple[float | None, str | None]:
         return None, None
     m = re.search(
         r"(\d{1,3}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*"
-        r"(USD|\$|UAH|₴|грн|EUR|€)?\s*(?:/\s*м(?:²|2)|за\s*м(?:²|2))\b",
+        r"(USD|\$|UAH|₴|грн|EUR|€)?\.?\s*"
+        r"(?:/\s*(?:кв\.?\s*)?м(?:²|2)?|за\s*(?:кв\.?\s*)?м(?:²|2)?)\b",
         text,
         flags=re.IGNORECASE,
     )
+    if not m:
+        # «За м² - 2000 грн»: the amount follows the unit.
+        m = re.search(
+            r"(?:/\s*(?:кв\.?\s*)?м(?:²|2)?|за\s*(?:кв\.?\s*)?м(?:²|2)?)\s*[-–—:]?\s*"
+            r"(\d{1,3}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)(?!\d)\s*"
+            r"(USD|\$|UAH|₴|грн|EUR|€)?",
+            text,
+            flags=re.IGNORECASE,
+        )
     if not m:
         m = re.search(
             r"(\d{1,3}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*"

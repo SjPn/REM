@@ -70,6 +70,15 @@ def test_parse_price_per_sqm():
     assert cur == "USD"
 
 
+def test_parse_price_per_sqm_hryvnia_per_kv_m():
+    psm, cur = parse_price_per_sqm("Ціна – 1000 грн./кв.м. + комунальні")
+    assert psm == 1000
+    assert cur == "UAH"
+    psm, cur = parse_price_per_sqm("Від 5м² до 20м². За м² - 2000 грн.")
+    assert psm == 2000
+    assert cur == "UAH"
+
+
 def test_parse_price_rejects_digit_soup():
     blob = "вул. Тестова 1 " + " ".join(str(i) for i in range(100000, 100050)) + " грн"
     price, cur = parse_price(blob)
@@ -146,6 +155,50 @@ def test_normalize_rent_rate_not_opex_fee():
     assert norm.price == pytest.approx(15 * 396.6, rel=0.01)
     assert norm.price_per_sqm == pytest.approx(15, rel=0.01)
     assert not norm.suspicious_psm
+
+
+def test_normalize_expands_hryvnia_per_kv_m():
+    norm = normalize_listing_price(
+        price=1000,
+        currency="UAH",
+        area_sqm=78,
+        deal_type="rent",
+        title="Оренда магазину",
+        description="Ціна – 1000 грн./кв.м. + комунальні.",
+    )
+    assert norm.reinterpreted_as_psm or norm.price == pytest.approx(1000 * 78, rel=0.01)
+    assert norm.price == pytest.approx(78_000, rel=0.01)
+    assert norm.currency == "UAH"
+
+
+def test_normalize_expands_absurdly_cheap_rent_as_rate():
+    """500 грн on 240 m² is $0.05/m², so the figure is a rate, not the month."""
+    norm = normalize_listing_price(
+        price=500,
+        currency="UAH",
+        area_sqm=240,
+        deal_type="rent",
+        title="Оренда офісу 240 м²",
+        description="500 ₴ 240 м² офіс",
+    )
+    assert norm.price == pytest.approx(120_000, rel=0.01)
+    assert norm.reinterpreted_as_psm
+
+
+def test_normalize_keeps_small_monthly_rent():
+    """3 000 грн for 27 m² is under $3/m² and is still the month, not a rate."""
+    norm = normalize_listing_price(
+        price=3000,
+        currency="UAH",
+        area_sqm=27,
+        deal_type="rent",
+        title="Оренда офісу 27м2 ціна 3000грн",
+        description="3 000 ₴ 27 м² Офіс біля метро. Вул. Сверстюка, 23.",
+    )
+    assert norm.price == 3000
+    assert norm.currency == "UAH"
+    assert not norm.reinterpreted_as_psm
+    assert norm.price_per_sqm == pytest.approx(3000 / 27, rel=0.01)
 
 
 def test_normalize_rent_price_that_is_actually_psm():

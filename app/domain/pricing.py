@@ -3,25 +3,19 @@
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass
 
 from app.domain.market_stats import to_usd
 
-# Rent $/m²·мес: below floor → likely the "price" is already a rate; above ceiling → outlier.
+# Rent $/m²·мес: under $1 the number is a rate (500 грн on 240 m²). $1–$3 can be a real month.
 _RENT_PSM_FLOOR_USD = 3.0
+_RENT_BARE_RATE_USD = 1.0
 _RENT_PSM_CEILING_USD = 70.0
 # Sale: expand only when implied $/m² is absurdly low (price field is clearly a rate).
 _SALE_PSM_FLOOR_USD = 80.0
 # Plausible Kyiv commercial sale band ($/м²). Keep in sync with market_stats._SALE_PSM_*.
 _SALE_PSM_MIN_USD = 450.0
 _SALE_PSM_MAX_USD = 10_000.0
-
-_EXPLICIT_PSM_RE = re.compile(
-    r"(\d{1,3}(?:[ \u00a0]?\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)\s*"
-    r"(?:USD|\$|UAH|₴|грн|EUR|€)?\s*(?:/\s*м(?:²|2)|за\s*м(?:²|2))\b",
-    re.IGNORECASE,
-)
 
 
 @dataclass(frozen=True)
@@ -34,27 +28,14 @@ class PriceNorm:
     detail: str = ""
 
 
-def _num(raw: str) -> float | None:
-    cleaned = raw.replace("\xa0", "").replace(" ", "").replace(",", ".")
-    if re.fullmatch(r"\d{1,3}(\.\d{3})+", cleaned):
-        cleaned = cleaned.replace(".", "")
-    try:
-        value = float(cleaned)
-    except ValueError:
-        return None
-    if not math.isfinite(value) or value <= 0:
-        return None
-    return value
-
-
 def extract_explicit_psm(text: str | None) -> float | None:
-    """First explicit N $/м² (or грн/м²) from listing text."""
+    """First explicit N $/м² (or грн/м², грн./кв.м) from listing text."""
     if not text:
         return None
-    m = _EXPLICIT_PSM_RE.search(text)
-    if not m:
-        return None
-    return _num(m.group(1))
+    from app.scrapers.http_utils import parse_price_per_sqm
+
+    value, _cur = parse_price_per_sqm(text)
+    return value
 
 
 def psm_floor_usd(deal_type: str | None) -> float:
@@ -225,8 +206,9 @@ def normalize_listing_price(
     """
     Repair only when the stored price is almost certainly already $/m².
 
-    Rent: expand only if implied $/m² < $3 AND the rate itself is in a plausible
-    band (≤ $50/м²) or an explicit N $/м² in the text matches the stored price.
+    Rent: 3 000 грн for 27 m² ($2.5/m²) is still the month. Without a «per m²»
+    mark, multiply a rent only when the number is under $1/m² — then it is a
+    rate (500 грн on 240 m²), not a month's rent.
     Never multiply a full monthly total that already yields a sane $/m².
     """
     from app.scrapers.http_utils import parse_price, parse_price_per_sqm
@@ -356,15 +338,15 @@ def normalize_listing_price(
             "explicit_psm_matches_price",
         )
 
-    # Expand only when implied $/m² is absurdly low AND rate looks like a real $/m²
-    if implied < floor:
-        rate_ok = True
-        if is_rent and usd > _RENT_PSM_CEILING_USD:
-            # e.g. 31 196 mistaken as rate — do not multiply by area
-            rate_ok = False
-        if not is_rent and (usd < _SALE_PSM_MIN_USD or usd > _SALE_PSM_MAX_USD):
-            # Stored "price" as putative $/м² must itself look like a sale rate
-            rate_ok = False
+    # Under $1/m² a rent figure is a rate (500 грн for 240 m²), not the month.
+    # $1–$3 is a cheap month: 3 000 грн for 27 m². A marked «N $/м²» already
+    # returned above. Sale totals of a few thousand dollars stay a $/m² rate.
+    bare_rate = implied < floor and (not is_rent or implied < _RENT_BARE_RATE_USD)
+    if bare_rate:
+        if is_rent:
+            rate_ok = usd <= _RENT_PSM_CEILING_USD
+        else:
+            rate_ok = usd >= _SALE_PSM_MIN_USD and usd <= _SALE_PSM_MAX_USD
         if rate_ok:
             total = round(p * a, 2)
             return PriceNorm(
